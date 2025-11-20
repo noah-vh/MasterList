@@ -26,3 +26,4 @@ convex/_generated/
 *.njsproj
 *.sln
 *.sw?
+.vercel
