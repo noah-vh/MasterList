@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, Sparkles, X, Loader2, LayoutTemplate, CheckCircle2, ChevronRight, Plus, Calendar, Clock } from 'lucide-react';
+import { ArrowUp, X, Loader2, LayoutTemplate, CheckCircle2, ChevronRight, Plus, Calendar, Clock } from 'lucide-react';
 import { useAction } from 'convex/react';
 import { api } from '../convex/_generated/api';
 import { AIResponse, ExtractedTaskData, GeneratedViewData } from '../types';
@@ -54,6 +54,13 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
         setShowOccurredDate(!!firstTask?.occurredDate);
         setShowParticipants(!!(firstTask?.participants && firstTask.participants.length > 0));
         setShowContext(!!firstTask?.context);
+      } else {
+        // Reset all field visibility if no task data
+        setShowActionDate(false);
+        setShowTimeEstimate(false);
+        setShowOccurredDate(false);
+        setShowParticipants(false);
+        setShowContext(false);
       }
       
       // Check if we have multiple tasks (must be > 1 to show as multiple)
@@ -92,6 +99,12 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
           // Only one task after deduplication - treat as single task
           setEditableTaskData(normalizedTasks[0]);
           setMultipleTasks([]);
+          // Update field visibility for single task
+          setShowActionDate(!!normalizedTasks[0].actionDate);
+          setShowTimeEstimate(!!normalizedTasks[0].timeEstimate);
+          setShowOccurredDate(!!normalizedTasks[0].occurredDate);
+          setShowParticipants(!!(normalizedTasks[0].participants && normalizedTasks[0].participants.length > 0));
+          setShowContext(!!normalizedTasks[0].context);
         } else {
           console.error("No valid tasks found in response");
         }
@@ -111,11 +124,23 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
         };
         setEditableTaskData(taskData);
         setMultipleTasks([]);
+        // Update field visibility for single task
+        setShowActionDate(!!taskData.actionDate);
+        setShowTimeEstimate(!!taskData.timeEstimate);
+        setShowOccurredDate(!!taskData.occurredDate);
+        setShowParticipants(!!(taskData.participants && taskData.participants.length > 0));
+        setShowContext(!!taskData.context);
       }
     } else {
       setEditableTaskData(null);
       setMultipleTasks([]);
       setCurrentTaskIndex(0);
+      // Reset field visibility
+      setShowActionDate(false);
+      setShowTimeEstimate(false);
+      setShowOccurredDate(false);
+      setShowParticipants(false);
+      setShowContext(false);
     }
   }, [aiResponse]);
 
@@ -238,9 +263,9 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
       }
     } else if (aiResponse.intent === 'GENERATE_VIEW' && aiResponse.viewData) {
       onApplyView(aiResponse.viewData);
-      setAiResponse(null);
-      setEditableTaskData(null);
-      setInput('');
+    setAiResponse(null);
+    setEditableTaskData(null);
+    setInput('');
     }
   };
 
@@ -316,7 +341,11 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
                 type="text" 
                 value={editableTaskData.title || ''}
                 onChange={(e) => updateTaskField('title', e.target.value)}
-                className="text-base font-medium text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none w-full"
+                className="text-base font-medium text-gray-900 bg-transparent border-b border-transparent hover:border-gray-300 focus:border-blue-500 focus:outline-none w-full min-h-[32px]"
+                autoComplete="off"
+                autoCorrect="off"
+                autoCapitalize="off"
+                spellCheck="false"
             />
           </div>
           <button onClick={handleCancel} className="text-gray-400 hover:text-gray-600 ml-2">
@@ -339,13 +368,14 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
           {showTimeEstimate ? (
             <div className="bg-gray-50 p-1.5 rounded-lg relative">
               <span className="text-gray-500 block text-[10px] uppercase tracking-wider mb-0.5">Time Est.</span>
-              <select
+            <select
                 value={editableTaskData.timeEstimate || ''}
                 onChange={(e) => {
-                  if (e.target.value === 'custom') {
+                  const value = e.target.value;
+                  if (value === 'custom') {
                     updateTaskField('timeEstimate', '');
-                  } else {
-                    updateTaskField('timeEstimate', e.target.value);
+                  } else if (value) {
+                    updateTaskField('timeEstimate', value);
                   }
                 }}
                 className="w-full bg-transparent font-medium text-gray-800 focus:outline-none text-xs appearance-none cursor-pointer"
@@ -357,17 +387,23 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
                   </option>
                 ))}
                 <option value="custom">Custom...</option>
-              </select>
-              {editableTaskData.timeEstimate === 'custom' || (!TIME_ESTIMATE_OPTIONS.includes(editableTaskData.timeEstimate || '')) && editableTaskData.timeEstimate ? (
+            </select>
+              {(editableTaskData.timeEstimate === 'custom' || (editableTaskData.timeEstimate && !TIME_ESTIMATE_OPTIONS.includes(editableTaskData.timeEstimate))) && (
                 <input
                   type="text"
                   placeholder="Enter custom time"
-                  value={editableTaskData.timeEstimate || ''}
+                  value={editableTaskData.timeEstimate === 'custom' ? '' : (editableTaskData.timeEstimate || '')}
                   onChange={(e) => updateTaskField('timeEstimate', e.target.value)}
                   className="w-full bg-transparent font-medium text-gray-800 focus:outline-none text-xs mt-1 border-t border-gray-200 pt-1"
-                  onFocus={(e) => e.target.select()}
+                  onFocus={(e) => {
+                    if (editableTaskData.timeEstimate === 'custom') {
+                      e.target.value = '';
+                    } else {
+                      e.target.select();
+                    }
+                  }}
                 />
-              ) : null}
+              )}
             </div>
           ) : (
             <div className="bg-gray-50 p-1.5 rounded-lg flex items-center justify-between">
@@ -392,7 +428,8 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
                   type="date"
                   value={editableTaskData.actionDate || ''}
                   onChange={(e) => updateTaskField('actionDate', e.target.value)}
-                  className="flex-1 bg-transparent font-medium text-gray-800 focus:outline-none text-xs"
+                  className="flex-1 bg-transparent font-medium text-gray-800 focus:outline-none text-xs min-h-[24px]"
+                  style={{ WebkitAppearance: 'none' }}
                 />
                 <div className="flex gap-1 flex-shrink-0">
                   <button
@@ -425,7 +462,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
               >
                 <Plus className="w-3.5 h-3.5" />
               </button>
-            </div>
+          </div>
           )}
 
           <div className="bg-gray-50 p-1.5 rounded-lg">
@@ -455,7 +492,8 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
                     type="date"
                     value={editableTaskData.occurredDate || ''}
                     onChange={(e) => updateTaskField('occurredDate', e.target.value)}
-                    className="flex-1 bg-transparent font-medium text-gray-800 focus:outline-none text-xs"
+                    className="flex-1 bg-transparent font-medium text-gray-800 focus:outline-none text-xs min-h-[24px]"
+                    style={{ WebkitAppearance: 'none' }}
                   />
                   <button
                     onClick={() => {
@@ -468,18 +506,18 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
                     <X className="w-3.5 h-3.5" />
                   </button>
                 </div>
-              </div>
+          </div>
             )}
 
             {showParticipants && (
               <div className="bg-gray-50 p-1.5 rounded-lg relative">
                 <span className="text-gray-500 block text-[10px] uppercase tracking-wider mb-0.5">Participants</span>
                 <div className="flex items-center gap-1">
-                  <input
-                    type="text"
-                    value={editableTaskData.participants?.join(', ') || ''}
-                    onChange={(e) => updateTaskField('participants', e.target.value.split(',').map(p => p.trim()).filter(p => p))}
-                    placeholder="John, Sarah"
+            <input
+                type="text"
+                value={editableTaskData.participants?.join(', ') || ''}
+                onChange={(e) => updateTaskField('participants', e.target.value.split(',').map(p => p.trim()).filter(p => p))}
+                placeholder="John, Sarah"
                     className="flex-1 bg-transparent font-medium text-gray-800 focus:outline-none text-xs"
                   />
                   <button
@@ -492,20 +530,20 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
                   >
                     <X className="w-3.5 h-3.5" />
                   </button>
-                </div>
-              </div>
+          </div>
+        </div>
             )}
 
             {showContext && (
               <div className="bg-gray-50 p-1.5 rounded-lg relative">
                 <span className="text-gray-500 block text-[10px] uppercase tracking-wider mb-0.5">Context</span>
                 <div className="flex items-start gap-1">
-                  <textarea
+            <textarea
                     value={editableTaskData.context || ''}
-                    onChange={(e) => updateTaskField('context', e.target.value)}
+                onChange={(e) => updateTaskField('context', e.target.value)}
                     className="flex-1 bg-transparent font-medium text-gray-800 focus:outline-none text-xs min-h-[40px] resize-none"
-                    placeholder="Additional context or notes..."
-                  />
+                placeholder="Additional context or notes..."
+            />
                   <button
                     onClick={() => {
                       setShowContext(false);
@@ -662,7 +700,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
         
         {/* AI Confirmation Card */}
         {aiResponse && (
-          <div className="absolute bottom-full left-0 right-0 mb-4 bg-white rounded-2xl shadow-xl border border-gray-200 p-5 animate-in slide-in-from-bottom-4 duration-300 max-h-[80vh] overflow-y-auto">
+          <div className="absolute bottom-full left-0 right-0 mb-4 bg-white rounded-2xl shadow-xl border border-gray-200 p-5 animate-in slide-in-from-bottom-4 duration-300 max-h-[80vh] overflow-y-auto touch-pan-y">
              {aiResponse.error ? (
                <div className="mb-4">
                  <div className="flex items-start justify-between mb-2">
@@ -719,7 +757,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
                  )}
                  {aiResponse.intent === 'CAPTURE_TASK' && editableTaskData && renderTaskConfirmation()}
                  {aiResponse.intent === 'GENERATE_VIEW' && aiResponse.viewData && renderViewConfirmation(aiResponse.viewData)}
-                 
+
                  {(!aiResponse.intent || (aiResponse.intent === 'CAPTURE_TASK' && !editableTaskData && multipleTasks.length === 0 && !aiResponse.taskData)) && (
                    <div className="mb-4 p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
                      <p className="text-sm text-yellow-800">
@@ -732,19 +770,19 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
                  )}
 
                  {(aiResponse.intent === 'CAPTURE_TASK' && editableTaskData) || (aiResponse.intent === 'GENERATE_VIEW' && aiResponse.viewData) ? (
-                   <div className="flex gap-3">
-                      <button
-                          onClick={handleConfirm}
-                          className="flex-1 bg-blue-50 text-blue-700 py-2.5 rounded-xl font-medium hover:bg-blue-100 transition-colors flex items-center justify-center gap-2 border border-blue-200"
-                      >
+                 <div className="flex gap-3">
+                    <button
+                        onClick={handleConfirm}
+                        className="flex-1 bg-blue-50 text-blue-700 py-2.5 rounded-xl font-medium hover:bg-blue-100 transition-colors flex items-center justify-center gap-2 border border-blue-200"
+                    >
                          {multipleTasks.length > 1 
                            ? (currentTaskIndex < multipleTasks.length - 1 ? `Add & Next (${currentTaskIndex + 1}/${multipleTasks.length})` : `Add Final Task (${multipleTasks.length}/${multipleTasks.length})`)
                            : (aiResponse.intent === 'CAPTURE_TASK' ? 'Add to List' : 'Enter Mode')}
                          {multipleTasks.length > 1 && currentTaskIndex < multipleTasks.length - 1 && (
                            <ChevronRight className="w-4 h-4" />
                          )}
-                      </button>
-                   </div>
+                    </button>
+                 </div>
                  ) : null}
                </>
              )}
@@ -761,6 +799,11 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
             placeholder="Add a task or tell me how you feel..."
             disabled={isProcessing || !!aiResponse}
             className="w-full pl-6 pr-14 py-4 rounded-full border-none focus:ring-2 focus:ring-blue-500/20 outline-none text-base text-gray-800 placeholder-gray-400 bg-white disabled:bg-gray-50 disabled:text-gray-400 transition-all"
+            autoComplete="off"
+            autoCorrect="off"
+            autoCapitalize="off"
+            spellCheck="false"
+            inputMode="text"
           />
           
           <button
@@ -778,15 +821,6 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
             )}
           </button>
         </form>
-
-        {!aiResponse && !isProcessing && (
-             <div className="mt-2 text-center">
-                 <p className="text-xs text-gray-400 flex items-center justify-center gap-1">
-                    <Sparkles className="w-3 h-3" />
-                    Powered by OpenRouter
-                 </p>
-             </div>
-        )}
       </div>
     </div>
   );
