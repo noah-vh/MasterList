@@ -16,6 +16,15 @@ dist-ssr
 # Convex
 convex/_generated/
 
+# API Keys and Secrets
+*API_KEY*
+*SECRET*
+*PASSWORD*
+*TOKEN*
+FIX_*.md
+*_KEY*.md
+*_SECRET*.md
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
