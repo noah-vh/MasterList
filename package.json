@@ -6,7 +6,7 @@
   "scripts": {
     "dev": "vite",
     "dev:convex": "convex dev",
-    "build": "vite build",
+    "build": "npx convex codegen && vite build",
     "preview": "vite preview"
   },
   "dependencies": {

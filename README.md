@@ -75,10 +75,14 @@ A full-stack task management application built with React, Convex, and OpenRoute
 
 3. **Set Environment Variables in Vercel:**
    - In your Vercel project settings, go to "Environment Variables"
-   - Add the following variable:
+   - Add the following variables:
      - **Name:** `VITE_CONVEX_URL`
-     - **Value:** Your Convex deployment URL (e.g., `https://modest-wombat-281.convex.cloud`)
-     - **Environment:** Production, Preview, and Development (select all)
+       - **Value:** Your Convex deployment URL (e.g., `https://modest-wombat-281.convex.cloud`)
+       - **Environment:** Production, Preview, and Development (select all)
+     - **Name:** `CONVEX_DEPLOYMENT`
+       - **Value:** Your Convex deployment name (e.g., `dev:modest-wombat-281` or `prod:modest-wombat-281`)
+       - **Environment:** Production, Preview, and Development (select all)
+       - **Note:** This is needed for the build process to generate Convex types
    
    **Important:** You do NOT need to set `OPENROUTER_API_KEY` in Vercel. This is already set in Convex and runs server-side in Convex actions.
 
