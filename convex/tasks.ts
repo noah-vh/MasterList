@@ -64,8 +64,9 @@ export const getByDateRange = query({
     
     // Filter by end date if provided
     if (args.end) {
+      const endDate = args.end;
       return tasks.filter(
-        (task) => !task.actionDate || task.actionDate <= args.end!
+        (task) => !task.actionDate || task.actionDate <= endDate
       );
     }
     

@@ -95,19 +95,31 @@ const App: React.FC = () => {
   };
 
   const handleAddTask = async (data: ExtractedTaskData) => {
-    await createTask({
-      title: data.title,
-      isCompleted: false,
-      status: data.status || TaskStatus.Active,
-      tags: data.tags || [],
-      actionDate: data.actionDate,
-      createdAt: Date.now(),
-      timeEstimate: data.timeEstimate,
-      context: data.context,
-      participants: data.participants,
-      occurredDate: data.occurredDate,
-      source: data.source,
-    });
+    try {
+      console.log("handleAddTask called with:", data);
+      
+      // Ensure all required fields are present
+      const taskData = {
+        title: data.title.trim(),
+        isCompleted: false,
+        status: (data.status || TaskStatus.Active) as TaskStatus,
+        tags: Array.isArray(data.tags) ? data.tags : [],
+        actionDate: data.actionDate || undefined,
+        createdAt: Date.now(),
+        timeEstimate: data.timeEstimate || undefined,
+        context: data.context || undefined,
+        participants: Array.isArray(data.participants) && data.participants.length > 0 ? data.participants : undefined,
+        occurredDate: data.occurredDate || undefined,
+        source: data.source || { type: 'manual' as const },
+      };
+      
+      console.log("Creating task with data:", taskData);
+      const taskId = await createTask(taskData);
+      console.log("Task created with ID:", taskId);
+    } catch (error) {
+      console.error("Error in handleAddTask:", error);
+      throw error; // Re-throw so SmartInput can catch it
+    }
   };
 
   const handleAddProjectWithSubtasks = async (parentData: ExtractedTaskData, childrenData: ExtractedTaskData[]) => {

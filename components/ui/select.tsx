@@ -3,7 +3,10 @@ import * as React from "react"
 import * as SelectPrimitive from "@radix-ui/react-select"
 import { CheckmarkCircle01, ArrowDown01, ArrowUp01 } from "hugeicons-react"
 
-import { cn } from "@/lib/utils"
+// Simple cn utility function
+const cn = (...classes: (string | undefined | null | false)[]): string => {
+  return classes.filter(Boolean).join(' ');
+}
 
 const Select = SelectPrimitive.Root
 

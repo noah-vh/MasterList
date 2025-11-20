@@ -99,7 +99,9 @@ export interface GeneratedViewData {
 
 // Unified response from Gemini
 export interface AIResponse {
-  intent: UserIntent;
-  taskData?: ExtractedTaskData;
-  viewData?: GeneratedViewData;
+  intent: UserIntent | null;
+  taskData?: ExtractedTaskData | null;
+  tasks?: ExtractedTaskData[] | null; // Multiple tasks if user mentioned multiple items
+  viewData?: GeneratedViewData | null;
+  error?: string; // Error message if API call failed
 }

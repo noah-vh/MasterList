@@ -156,7 +156,8 @@ export function getAllTags(): string[] {
 export interface FilterGroup {
   id: string;
   name: string;
-  category: 'headspace' | 'energy' | 'duration' | 'domains';
+  category?: 'headspace' | 'energy' | 'duration' | 'domains';
+  tags?: string[]; // Custom list of tags for this group
   color?: string;
   icon?: string;
 }

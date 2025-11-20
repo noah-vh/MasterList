@@ -56,6 +56,48 @@ A full-stack task management application built with React, Convex, and OpenRoute
 
 5. Open your browser to `http://localhost:3000`
 
+## Deploy to Vercel
+
+### Prerequisites
+- A Vercel account
+- Your Convex project set up (see Setup step 2)
+- OpenRouter API key set in Convex (see Setup step 3)
+
+### Deployment Steps
+
+1. **Push your code to GitHub** (if not already done)
+
+2. **Import your project to Vercel:**
+   - Go to [vercel.com](https://vercel.com)
+   - Click "Add New Project"
+   - Import your GitHub repository
+   - Vercel will auto-detect Vite configuration
+
+3. **Set Environment Variables in Vercel:**
+   - In your Vercel project settings, go to "Environment Variables"
+   - Add the following variable:
+     - **Name:** `VITE_CONVEX_URL`
+     - **Value:** Your Convex deployment URL (e.g., `https://modest-wombat-281.convex.cloud`)
+     - **Environment:** Production, Preview, and Development (select all)
+   
+   **Important:** You do NOT need to set `OPENROUTER_API_KEY` in Vercel. This is already set in Convex and runs server-side in Convex actions.
+
+4. **Deploy:**
+   - Click "Deploy"
+   - Vercel will build and deploy your app
+   - Your app will be live at `https://your-project.vercel.app`
+
+### Verify Deployment
+
+After deployment, test that:
+- The app loads correctly
+- You can create tasks (this tests Convex connection)
+- AI task extraction works (this tests OpenRouter API via Convex)
+
+If AI features don't work, check:
+- OpenRouter API key is set in Convex: `npx convex env list`
+- The API key is valid and has credits in your OpenRouter account
+
 ## Project Structure
 
 - `convex/` - Backend functions (queries, mutations, actions)
