@@ -1,7 +1,7 @@
 import React, { useMemo } from 'react';
 import { Task, TaskStatus } from '../types';
 import { getTagMetadata, TAG_CATEGORIES } from '../constants';
-import { CheckCircle2, Circle, Clock, Calendar } from 'lucide-react';
+import { CheckCircle2, Circle, Clock, Calendar, User } from 'lucide-react';
 import { Badge } from './Badge';
 
 interface TaskCardProps {
@@ -10,9 +10,9 @@ interface TaskCardProps {
   onClick: (id: string) => void;
 }
 
-export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) => {
-  // Group tags by category
-  const groupedTags = useMemo(() => {
+// Helper to group tags
+const useGroupedTags = (task: Task) => {
+  return useMemo(() => {
     const grouped: Record<string, string[]> = {
       headspace: [],
       energy: [],
@@ -25,19 +25,33 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
       if (grouped[metadata.category]) {
         grouped[metadata.category].push(tag);
       } else {
-        grouped.domains.push(tag); // Custom tags go to domains
+        grouped.domains.push(tag);
       }
     });
     
     return grouped;
   }, [task.tags]);
+};
 
-  const statusColors: Record<TaskStatus, string> = {
-    [TaskStatus.Active]: 'bg-blue-100 text-blue-700',
-    [TaskStatus.WaitingOn]: 'bg-yellow-100 text-yellow-700',
-    [TaskStatus.SomedayMaybe]: 'bg-gray-100 text-gray-700',
-    [TaskStatus.Archived]: 'bg-slate-100 text-slate-700',
-  };
+const statusDotColors: Record<TaskStatus, string> = {
+  [TaskStatus.Active]: 'bg-blue-500 shadow-sm shadow-blue-200',
+  [TaskStatus.WaitingOn]: 'bg-yellow-500 shadow-sm shadow-yellow-200',
+  [TaskStatus.SomedayMaybe]: 'bg-gray-400',
+  [TaskStatus.Archived]: 'bg-slate-400',
+};
+
+export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) => {
+  const groupedTags = useGroupedTags(task);
+  const mainCategory = groupedTags.domains[0]; // Primary domain
+  const categoryMeta = mainCategory ? getTagMetadata(mainCategory) : null;
+  
+  // Filter out duration if timeEstimate exists, and flatten other tags for the "subtags" line
+  const subTags = [
+    ...groupedTags.headspace,
+    ...groupedTags.energy,
+    // Only show duration tag if no specific time estimate
+    ...(!task.timeEstimate ? groupedTags.duration : [])
+  ];
 
   return (
     <div 
@@ -48,107 +62,71 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
       ${task.isCompleted ? 'opacity-60 grayscale-[0.5]' : ''}
     `}>
       <div className="flex items-start gap-3">
+        {/* Checkbox */}
         <button
           onClick={(e) => {
             e.stopPropagation();
             onToggle(task.id);
           }}
-          className="mt-1 text-gray-400 hover:text-blue-600 transition-colors focus:outline-none"
+          className="mt-0.5 text-gray-400 hover:text-blue-600 transition-colors focus:outline-none"
         >
           {task.isCompleted ? (
-            <CheckCircle2 className="w-6 h-6 text-gray-400" />
+            <CheckCircle2 className="w-5 h-5 text-gray-400" />
           ) : (
-            <Circle className="w-6 h-6" />
+            <Circle className="w-5 h-5" />
           )}
         </button>
 
         <div className="flex-1 min-w-0">
-          <h3 className={`text-base font-medium text-gray-900 mb-2 truncate ${task.isCompleted ? 'line-through text-gray-500' : ''}`}>
-            {task.title}
-          </h3>
+          {/* Top Row: Status Dot + Title */}
+          <div className="flex items-center gap-3 mb-2">
+            {!task.isCompleted && (
+              <div className={`w-2 h-2 rounded-full ${statusDotColors[task.status]}`} />
+            )}
+            <h3 className={`text-base font-medium text-gray-900 truncate ${task.isCompleted ? 'line-through text-gray-500' : ''}`}>
+              {task.title}
+            </h3>
+          </div>
 
-          <div className="space-y-2">
-            {/* Status and Tags Row */}
-            <div className="flex flex-wrap gap-2 items-center">
-              {/* Status Badge */}
-              {!task.isCompleted && (
-                <Badge 
-                  label={task.status} 
-                  className={statusColors[task.status]} 
-                />
+          {/* Bottom: Category Pill + Subtags + Metadata */}
+          <div className="flex items-center justify-between text-xs text-gray-500 mt-1">
+            {/* Left: Category + Subtags */}
+            <div className="flex items-center gap-2 flex-wrap">
+              {mainCategory && categoryMeta && (
+                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide ${categoryMeta.color}`}>
+                  {mainCategory}
+                </span>
               )}
-
-              {/* Tags grouped by category */}
-              {Object.entries(groupedTags).map(([category, categoryTags]) => 
-                categoryTags.length > 0 && (
-                  <React.Fragment key={category}>
-                    {categoryTags.map(tag => {
-                      const metadata = getTagMetadata(tag);
-                      return (
-                        <Badge
-                          key={tag}
-                          label={metadata.label}
-                          className={metadata.color}
-                        />
-                      );
-                    })}
-                  </React.Fragment>
-                )
-              )}
-
-              {/* Participants */}
-              {task.participants && task.participants.length > 0 && (
-                <div className="flex gap-1">
-                  {task.participants.slice(0, 2).map((person, i) => (
-                    <Badge key={i} label={person} className="bg-purple-100 text-purple-700 text-xs" />
-                  ))}
-                  {task.participants.length > 2 && (
-                    <Badge label={`+${task.participants.length - 2}`} className="bg-purple-100 text-purple-700 text-xs" />
-                  )}
-                </div>
-              )}
-
-              {/* Source Indicator */}
-              {task.source && (
-                <Badge
-                  label={
-                    task.source.type === 'voice' ? '🎤' :
-                    task.source.type === 'email' ? '✉️' :
-                    task.source.type === 'transcript' ? '📝' :
-                    '📱'
-                  }
-                  className="bg-gray-100 text-gray-700 text-xs"
-                  title={`Captured from ${task.source.type}`}
-                />
-              )}
+              
+              {subTags.map((tag, i) => {
+                const meta = getTagMetadata(tag);
+                return (
+                  <span key={tag} className={`px-2 py-0.5 rounded text-[10px] font-medium ${meta.color}`}>
+                    {tag}
+                  </span>
+                );
+              })}
             </div>
 
-            {/* Context Row */}
-            {task.context && (
-              <p className="text-sm text-gray-600 line-clamp-2" title={task.context}>
-                {task.context}
-              </p>
-            )}
-
-            {/* Metadata Row */}
-            <div className="flex items-center gap-3 text-xs text-gray-500">
-              {task.actionDate && (
-                <div className="flex items-center gap-1" title="Action Date">
-                  <Calendar className="w-3 h-3" />
-                  <span>{new Date(task.actionDate).toLocaleDateString()}</span>
-                </div>
-              )}
+            {/* Right: Metadata Icons */}
+            <div className="flex items-center gap-3 shrink-0 ml-2">
               {task.timeEstimate && (
                 <div className="flex items-center gap-1" title="Time Estimate">
-                  <Clock className="w-3 h-3" />
+                  <Clock className="w-3 h-3 text-gray-400" />
                   <span>{task.timeEstimate}</span>
                 </div>
               )}
-              {task.occurredDate && (
-                <div className="flex items-center gap-1" title="Occurred Date">
-                  <span className="text-gray-400">📅</span>
-                  <span>{new Date(task.occurredDate).toLocaleDateString()}</span>
+              {task.actionDate && (
+                <div className="flex items-center gap-1" title="Action Date">
+                  <Calendar className="w-3 h-3 text-gray-400" />
+                  <span>{new Date(task.actionDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
                 </div>
+              )}
+              {task.participants && task.participants.length > 0 && (
+                 <div className="flex items-center gap-1" title="Participants">
+                   <User className="w-3 h-3 text-gray-400" />
+                   <span className="truncate max-w-[100px]">{task.participants.join(', ')}</span>
+                 </div>
               )}
             </div>
           </div>

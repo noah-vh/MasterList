@@ -1,15 +1,44 @@
 import React, { useState, useMemo } from 'react';
 import { Search, Bell, Menu } from 'lucide-react';
+import { useQuery, useMutation } from 'convex/react';
+import { api } from './convex/_generated/api';
+import { Id } from './convex/_generated/dataModel';
 import { Task, FilterState, ExtractedTaskData, GeneratedViewData, TaskStatus } from './types';
-import { MOCK_TASKS } from './constants';
 import { FilterBar } from './components/FilterBar';
 import { TaskCard } from './components/TaskCard';
 import { SmartInput } from './components/SmartInput';
 import { TaskDetailView } from './components/TaskDetailView';
-import { v4 as uuidv4 } from 'uuid';
+
+// Helper to convert Convex task to frontend Task type
+const convexTaskToTask = (convexTask: any): Task => {
+  return {
+    id: convexTask._id,
+    title: convexTask.title,
+    isCompleted: convexTask.isCompleted,
+    status: convexTask.status,
+    createdAt: convexTask.createdAt,
+    actionDate: convexTask.actionDate,
+    tags: convexTask.tags,
+    timeEstimate: convexTask.timeEstimate,
+    context: convexTask.context,
+    participants: convexTask.participants,
+    occurredDate: convexTask.occurredDate,
+    source: convexTask.source,
+    linkedTasks: convexTask.linkedTasks,
+    parentTaskId: convexTask.parentTaskId,
+  };
+};
 
 const App: React.FC = () => {
-  const [tasks, setTasks] = useState<Task[]>(MOCK_TASKS);
+  const convexTasks = useQuery(api.tasks.list) ?? [];
+  const tasks = useMemo(() => convexTasks.map(convexTaskToTask), [convexTasks]);
+  
+  const createTask = useMutation(api.tasks.create);
+  const updateTask = useMutation(api.tasks.update);
+  const toggleTask = useMutation(api.tasks.toggleComplete);
+  const deleteTask = useMutation(api.tasks.deleteTask);
+  const createWithSubtasks = useMutation(api.tasks.createWithSubtasks);
+
   const [filters, setFilters] = useState<FilterState>({
     tags: [],
     status: [],
@@ -61,15 +90,12 @@ const App: React.FC = () => {
     });
   }, [tasks, filters]);
 
-  const handleToggleTask = (id: string) => {
-    setTasks(prev => prev.map(t => 
-      t.id === id ? { ...t, isCompleted: !t.isCompleted } : t
-    ));
+  const handleToggleTask = async (id: string) => {
+    await toggleTask({ id: id as Id<"tasks"> });
   };
 
-  const handleAddTask = (data: ExtractedTaskData) => {
-    const newTask: Task = {
-      id: uuidv4(), 
+  const handleAddTask = async (data: ExtractedTaskData) => {
+    await createTask({
       title: data.title,
       isCompleted: false,
       status: data.status || TaskStatus.Active,
@@ -81,47 +107,36 @@ const App: React.FC = () => {
       participants: data.participants,
       occurredDate: data.occurredDate,
       source: data.source,
-    };
-    setTasks(prev => [newTask, ...prev]);
+    });
   };
 
-  const handleAddProjectWithSubtasks = (parentData: ExtractedTaskData, childrenData: ExtractedTaskData[]) => {
-    // Create parent task first
-    const parentId = uuidv4();
-    const parentTask: Task = {
-      id: parentId,
-      title: parentData.title,
-      isCompleted: false,
-      status: parentData.status || TaskStatus.Active,
-      tags: parentData.tags || [],
-      actionDate: parentData.actionDate,
-      createdAt: Date.now(),
-      timeEstimate: parentData.timeEstimate,
-      context: parentData.context,
-      participants: parentData.participants,
-      occurredDate: parentData.occurredDate,
-      source: parentData.source,
-    };
-
-    // Create child tasks with parentTaskId reference
-    const childTasks: Task[] = childrenData.map(childData => ({
-      id: uuidv4(),
-      title: childData.title,
-      isCompleted: false,
-      status: childData.status || TaskStatus.Active,
-      tags: childData.tags || [],
-      actionDate: childData.actionDate,
-      parentTaskId: parentId,
-      createdAt: Date.now(),
-      timeEstimate: childData.timeEstimate,
-      context: childData.context,
-      participants: childData.participants,
-      occurredDate: childData.occurredDate,
-      source: childData.source,
-    }));
-
-    // Add all tasks at once (parent first, then children)
-    setTasks(prev => [parentTask, ...childTasks, ...prev]);
+  const handleAddProjectWithSubtasks = async (parentData: ExtractedTaskData, childrenData: ExtractedTaskData[]) => {
+    await createWithSubtasks({
+      parent: {
+        title: parentData.title,
+        status: parentData.status || TaskStatus.Active,
+        tags: parentData.tags || [],
+        actionDate: parentData.actionDate,
+        createdAt: Date.now(),
+        timeEstimate: parentData.timeEstimate,
+        context: parentData.context,
+        participants: parentData.participants,
+        occurredDate: parentData.occurredDate,
+        source: parentData.source,
+      },
+      children: childrenData.map(childData => ({
+        title: childData.title,
+        status: childData.status || TaskStatus.Active,
+        tags: childData.tags || [],
+        actionDate: childData.actionDate,
+        createdAt: Date.now(),
+        timeEstimate: childData.timeEstimate,
+        context: childData.context,
+        participants: childData.participants,
+        occurredDate: childData.occurredDate,
+        source: childData.source,
+      })),
+    });
   };
 
 
@@ -144,12 +159,25 @@ const App: React.FC = () => {
     setSelectedTaskId(id);
   };
 
-  const handleUpdateTask = (updatedTask: Task) => {
-    setTasks(prev => prev.map(t => t.id === updatedTask.id ? updatedTask : t));
+  const handleUpdateTask = async (updatedTask: Task) => {
+    await updateTask({
+      id: updatedTask.id as Id<"tasks">,
+      title: updatedTask.title,
+      isCompleted: updatedTask.isCompleted,
+      status: updatedTask.status,
+      actionDate: updatedTask.actionDate,
+      tags: updatedTask.tags,
+      timeEstimate: updatedTask.timeEstimate,
+      context: updatedTask.context,
+      participants: updatedTask.participants,
+      occurredDate: updatedTask.occurredDate,
+      source: updatedTask.source,
+      linkedTasks: updatedTask.linkedTasks,
+    });
   };
 
-  const handleDeleteTask = (id: string) => {
-    setTasks(prev => prev.filter(t => t.id !== id));
+  const handleDeleteTask = async (id: string) => {
+    await deleteTask({ id: id as Id<"tasks"> });
     setSelectedTaskId(null);
   };
 

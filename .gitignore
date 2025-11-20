@@ -11,6 +11,10 @@ node_modules
 dist
 dist-ssr
 *.local
+.env.local
+
+# Convex
+convex/_generated/
 
 # Editor directories and files
 .vscode/*

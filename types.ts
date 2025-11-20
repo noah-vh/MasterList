@@ -6,6 +6,26 @@ export enum TaskStatus {
   Archived = 'Archived',
 }
 
+export enum Area {
+  Professional = 'Professional',
+  Personal = 'Personal',
+  Domestic = 'Domestic',
+  Social = 'Social',
+}
+
+export enum EnergyLevel {
+  Low = 'Low',
+  Medium = 'Medium',
+  High = 'High',
+}
+
+export enum LocationContext {
+  Home = 'Home',
+  Office = 'Office',
+  Computer = 'Computer',
+  Errands = 'Errands',
+}
+
 export interface Task {
   id: string;
   title: string;
@@ -18,9 +38,6 @@ export interface Task {
   
   // Layer 2 & 3: Tags (arrays of strings)
   tags: string[]; // e.g., ['DeepFocus', 'HeavyLift', 'Work', 'Tech']
-  
-  // Parent-child relationships
-  parentTaskId?: string; // ID of parent task for hierarchical structure
   
   // Legacy fields for migration (optional)
   timeEstimate?: string;
@@ -45,14 +62,22 @@ export interface FilterState {
 
 // --- AI Response Structures ---
 
-export type UserIntent = 'CAPTURE_TASK' | 'GENERATE_VIEW' | 'PLAN_PROJECT';
+export type UserIntent = 'CAPTURE_TASK' | 'GENERATE_VIEW';
 
 // Payload for creating a new task
 export interface ExtractedTaskData {
   title: string;
-  tags: string[]; // Suggested tags
-  status: TaskStatus;
-  actionDate?: string; // ISO date string YYYY-MM-DD
+  tags?: string[]; // Suggested tags (can be derived from area/energy/location)
+  status?: TaskStatus; // Optional, defaults to Active
+  actionDate?: string; // ISO date string YYYY-MM-DD (replaces dueDate)
+  dueDate?: string; // Legacy field, use actionDate instead
+
+  // Classification fields (from AI extraction - used in SmartInput UI)
+  area?: Area;
+  energy?: EnergyLevel;
+  location?: LocationContext;
+  type?: 'Task' | 'Project' | 'Idea';
+  isUrgent?: boolean;
 
   // Enhanced metadata
   timeEstimate?: string;
@@ -72,33 +97,9 @@ export interface GeneratedViewData {
   filters: FilterState;
 }
 
-// Planning conversation message
-export interface ConversationMessage {
-  role: 'user' | 'assistant';
-  content: string;
-  timestamp: number;
-}
-
-// Planning conversation state
-export interface PlanningConversation {
-  messages: ConversationMessage[];
-  isActive: boolean;
-  projectTitle?: string;
-}
-
-// Project breakdown with parent and children
-export interface ProjectBreakdown {
-  parentTask: ExtractedTaskData;
-  childTasks: ExtractedTaskData[];
-  summary?: string; // AI's explanation of the breakdown
-}
-
 // Unified response from Gemini
 export interface AIResponse {
   intent: UserIntent;
   taskData?: ExtractedTaskData;
   viewData?: GeneratedViewData;
-  projectBreakdown?: ProjectBreakdown;
-  conversationMessage?: string; // AI's response in planning mode
-  needsClarification?: boolean; // Whether AI needs more info before proposing breakdown
 }

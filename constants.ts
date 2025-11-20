@@ -1,4 +1,4 @@
-import { Task, TaskStatus } from './types';
+import { TaskStatus } from './types';
 
 // Tag Categories - Layer 2 & 3
 export const TAG_CATEGORIES = {
@@ -152,59 +152,38 @@ export function getAllTags(): string[] {
   return Object.values(TAG_CATEGORIES).flat();
 }
 
-// Mock tasks in new tag-based format
-export const MOCK_TASKS: Task[] = [
+// Default Filter Groups (Category-based views)
+export interface FilterGroup {
+  id: string;
+  name: string;
+  category: 'headspace' | 'energy' | 'duration' | 'domains';
+  color?: string;
+  icon?: string;
+}
+
+export const DEFAULT_FILTER_GROUPS: FilterGroup[] = [
   {
-    id: '1',
-    title: 'Finalize Q3 presentation slides',
-    isCompleted: false,
-    status: TaskStatus.Active,
-    tags: ['Work', 'DeepFocus', 'HeavyLift', 'Tech', 'Hours'],
-    timeEstimate: '45min',
-    createdAt: Date.now() - 100000,
-    actionDate: new Date().toISOString().split('T')[0],
+    id: 'energy',
+    name: 'Energy',
+    category: 'energy',
+    color: 'bg-yellow-100 text-yellow-700 border-yellow-200',
   },
   {
-    id: '2',
-    title: 'Draft project proposal for Lumina',
-    isCompleted: true,
-    status: TaskStatus.Active,
-    tags: ['Work', 'DeepFocus', 'HeavyLift', 'Multi-Session'],
-    timeEstimate: '2hr',
-    createdAt: Date.now() - 200000,
+    id: 'headspace',
+    name: 'Headspace',
+    category: 'headspace',
+    color: 'bg-indigo-100 text-indigo-700 border-indigo-200',
   },
   {
-    id: '3',
-    title: 'Book flight to New York',
-    isCompleted: false,
-    status: TaskStatus.Active,
-    tags: ['Personal', 'Admin', 'QuickWin', 'Tech', 'Minutes'],
-    timeEstimate: '15min',
-    createdAt: Date.now() - 300000,
-    participants: ['Sarah'],
-    context: 'Sarah suggested we book flights for the conference next week',
-    occurredDate: new Date(Date.now() - 86400000).toISOString().split('T')[0],
-    source: { type: 'manual' },
+    id: 'domains',
+    name: 'Domains',
+    category: 'domains',
+    color: 'bg-blue-100 text-blue-700 border-blue-200',
   },
   {
-    id: '4',
-    title: 'Fix the kitchen sink leak',
-    isCompleted: false,
-    status: TaskStatus.Active,
-    tags: ['Personal', 'Errand', 'Offline', 'Hours'],
-    timeEstimate: '30min',
-    createdAt: Date.now() - 400000,
-    context: 'Sink was leaking badly this morning - need plumber tools',
-    participants: ['John'],
-    occurredDate: new Date(Date.now() - 3600000).toISOString().split('T')[0],
-  },
-  {
-    id: '5',
-    title: 'Brainstorm AI app ideas',
-    isCompleted: false,
-    status: TaskStatus.Active,
-    tags: ['Work', 'Creative', 'Growth', 'Tech', 'Minutes'],
-    timeEstimate: '10min',
-    createdAt: Date.now() - 500000,
+    id: 'duration',
+    name: 'Duration',
+    category: 'duration',
+    color: 'bg-cyan-100 text-cyan-700 border-cyan-200',
   },
 ];
