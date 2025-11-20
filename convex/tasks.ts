@@ -209,6 +209,43 @@ export const deleteTask = mutation({
   },
 });
 
+// Mutation: Toggle today status (add/remove from today's list)
+export const toggleTodayStatus = mutation({
+  args: { id: v.id("tasks") },
+  handler: async (ctx, args) => {
+    const task = await ctx.db.get(args.id);
+    if (!task) {
+      throw new Error("Task not found");
+    }
+    
+    // Get today's date in YYYY-MM-DD format
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    
+    // Normalize task.actionDate to YYYY-MM-DD format for comparison
+    const taskDateStr = task.actionDate 
+      ? (task.actionDate.includes('T') ? task.actionDate.split('T')[0] : task.actionDate)
+      : null;
+    
+    // If task has actionDate = today, clear it (remove from today)
+    // Otherwise, set actionDate to today (add to today)
+    const newActionDate = taskDateStr === todayStr ? undefined : todayStr;
+    
+    console.log('Mutation: toggleTodayStatus', {
+      taskId: args.id,
+      currentActionDate: task.actionDate,
+      taskDateStr,
+      todayStr,
+      newActionDate
+    });
+    
+    await ctx.db.patch(args.id, {
+      actionDate: newActionDate,
+    });
+    return args.id;
+  },
+});
+
 // Mutation: Create parent task with subtasks
 export const createWithSubtasks = mutation({
   args: {

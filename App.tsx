@@ -1,4 +1,4 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 import { Search, Bell, Menu } from 'lucide-react';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from './convex/_generated/api';
@@ -8,6 +8,7 @@ import { FilterBar } from './components/FilterBar';
 import { TaskCard } from './components/TaskCard';
 import { SmartInput } from './components/SmartInput';
 import { TaskDetailView } from './components/TaskDetailView';
+import { motion, AnimatePresence } from 'framer-motion';
 
 // Helper to convert Convex task to frontend Task type
 const convexTaskToTask = (convexTask: any): Task => {
@@ -46,6 +47,62 @@ const App: React.FC = () => {
   });
   const [currentViewName, setCurrentViewName] = useState<string | undefined>(undefined);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
+  const [currentView, setCurrentView] = useState<'master' | 'today'>('master');
+  
+  // Swipe navigation state
+  const swipeStartX = useRef<number | null>(null);
+  const swipeStartY = useRef<number | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  // Helper to check if date is today
+  const isToday = (dateStr: string | undefined): boolean => {
+    if (!dateStr) return false;
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    return dateStr === todayStr;
+  };
+
+  // Today view filtering - tasks with actionDate = today
+  const todayTasks = useMemo(() => {
+    const today = new Date();
+    const todayStr = today.toISOString().split('T')[0];
+    
+    const filtered = tasks.filter(task => {
+      if (!task.actionDate) return false;
+      // Handle both YYYY-MM-DD format and full ISO strings
+      const taskDateStr = task.actionDate.includes('T') 
+        ? task.actionDate.split('T')[0] 
+        : task.actionDate;
+      return taskDateStr === todayStr;
+    });
+    
+    console.log('Today tasks:', filtered.length, 'out of', tasks.length, 'tasks');
+    console.log('Today date:', todayStr);
+    const tasksWithDates = tasks.filter(t => t.actionDate).map(t => {
+      const taskDateStr = t.actionDate.includes('T') ? t.actionDate.split('T')[0] : t.actionDate;
+      return { id: t.id, actionDate: t.actionDate, parsed: taskDateStr, matches: taskDateStr === todayStr };
+    });
+    console.log('Tasks with actionDate:', tasksWithDates);
+    
+    return filtered
+      .sort((a, b) => {
+        // Primary: Completed tasks at bottom
+        if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
+        
+        // Secondary: By status priority (Active > WaitingOn > SomedayMaybe > Archived)
+        const statusPriority: Record<TaskStatus, number> = {
+          [TaskStatus.Active]: 0,
+          [TaskStatus.WaitingOn]: 1,
+          [TaskStatus.SomedayMaybe]: 2,
+          [TaskStatus.Archived]: 3,
+        };
+        const statusDiff = statusPriority[a.status] - statusPriority[b.status];
+        if (statusDiff !== 0) return statusDiff;
+        
+        // Tertiary: By createdAt (newest first)
+        return b.createdAt - a.createdAt;
+      });
+  }, [tasks]);
 
   // Filter Logic - Tag-based faceted filtering with AND logic
   const filteredTasks = useMemo(() => {
@@ -193,15 +250,141 @@ const App: React.FC = () => {
     setSelectedTaskId(null);
   };
 
+  // Swipe navigation handlers
+  const startNavSwipe = (clientX: number, clientY: number) => {
+    swipeStartX.current = clientX;
+    swipeStartY.current = clientY;
+  };
+
+  const updateNavSwipe = (clientX: number, clientY: number) => {
+    if (swipeStartX.current === null || swipeStartY.current === null) return;
+    
+    const deltaX = clientX - swipeStartX.current;
+    const deltaY = clientY - swipeStartY.current;
+    
+    // Only handle horizontal swipes (more horizontal than vertical)
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 20) {
+      return true; // Indicates horizontal swipe
+    }
+    return false;
+  };
+
+  const endNavSwipe = (clientX: number, clientY: number) => {
+    if (swipeStartX.current === null || swipeStartY.current === null) return;
+    
+    const deltaX = clientX - swipeStartX.current;
+    const deltaY = clientY - swipeStartY.current;
+    
+    const threshold = 150;
+    
+    // Swipe right: Master -> Today (Today is to the left)
+    if (deltaX > threshold && Math.abs(deltaX) > Math.abs(deltaY) && currentView === 'master') {
+      setCurrentView('today');
+    }
+    // Swipe left: Today -> Master (Master is to the right)
+    else if (deltaX < -threshold && Math.abs(deltaX) > Math.abs(deltaY) && currentView === 'today') {
+      setCurrentView('master');
+    }
+    
+    swipeStartX.current = null;
+    swipeStartY.current = null;
+  };
+
+  const handleTouchStart = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    startNavSwipe(touch.clientX, touch.clientY);
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    const touch = e.touches[0];
+    if (updateNavSwipe(touch.clientX, touch.clientY)) {
+      e.preventDefault(); // Prevent scrolling during horizontal swipe
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    const touch = e.changedTouches[0];
+    endNavSwipe(touch.clientX, touch.clientY);
+  };
+
+  const handleMouseDown = (e: React.MouseEvent) => {
+    if (e.button !== 0) return; // Only left mouse button
+    // Only handle if clicking on the main container, not on interactive elements
+    const target = e.target as HTMLElement;
+    if (target.closest('button, a, input, textarea, select')) return;
+    
+    startNavSwipe(e.clientX, e.clientY);
+    
+    // Add global mouse listeners for drag
+    const handleGlobalMouseMove = (e: MouseEvent) => {
+      if (updateNavSwipe(e.clientX, e.clientY)) {
+        e.preventDefault();
+      }
+    };
+    
+    const handleGlobalMouseUp = (e: MouseEvent) => {
+      endNavSwipe(e.clientX, e.clientY);
+      document.removeEventListener('mousemove', handleGlobalMouseMove);
+      document.removeEventListener('mouseup', handleGlobalMouseUp);
+    };
+    
+    document.addEventListener('mousemove', handleGlobalMouseMove);
+    document.addEventListener('mouseup', handleGlobalMouseUp);
+  };
+
+  // Get tasks for current view
+  const displayTasks = currentView === 'today' ? todayTasks : filteredTasks;
+  
+  // Calculate today stats
+  const todayStats = useMemo(() => {
+    const activeTasks = todayTasks.filter(t => !t.isCompleted);
+    const totalTime = activeTasks.reduce((sum, task) => {
+      if (task.timeEstimate) {
+        const match = task.timeEstimate.match(/(\d+)\s*(?:hour|hr|h|minute|min|m)/i);
+        if (match) {
+          const num = parseInt(match[1]);
+          const unit = match[0].toLowerCase();
+          if (unit.includes('hour') || unit.includes('hr') || unit.includes('h')) {
+            return sum + num * 60;
+          } else {
+            return sum + num;
+          }
+        }
+      }
+      return sum;
+    }, 0);
+    return {
+      count: activeTasks.length,
+      timeEstimate: totalTime > 0 ? `${Math.round(totalTime / 60 * 10) / 10}h` : null,
+    };
+  }, [todayTasks]);
+
   return (
-    <div className="min-h-screen flex flex-col max-w-2xl mx-auto bg-[#F3F4F6] overflow-x-hidden">
+    <div 
+      ref={containerRef}
+      onTouchStart={handleTouchStart}
+      onTouchMove={handleTouchMove}
+      onTouchEnd={handleTouchEnd}
+      onMouseDown={handleMouseDown}
+      className="min-h-screen flex flex-col max-w-2xl mx-auto bg-[#F3F4F6] overflow-x-hidden relative select-none"
+    >
       
       {/* Fixed Header + Filter Container */}
       <div className="fixed top-0 left-0 right-0 z-20 bg-[#F3F4F6]">
         <div className="max-w-2xl mx-auto">
           {/* Header */}
           <header className="flex items-center justify-between p-6 pb-2 shrink-0">
-            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Master List</h1>
+            <div className="flex-1">
+              <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
+                {currentView === 'today' ? "Today's List" : 'Master List'}
+              </h1>
+              {currentView === 'today' && todayStats.count > 0 && (
+                <p className="text-xs text-gray-500 mt-1">
+                  {todayStats.count} task{todayStats.count !== 1 ? 's' : ''}
+                  {todayStats.timeEstimate && ` • ${todayStats.timeEstimate}`}
+                </p>
+              )}
+            </div>
             <div className="flex items-center gap-4 text-gray-500">
               <button className="hover:text-gray-900 transition-colors">
                 <Search className="w-6 h-6" />
@@ -212,47 +395,66 @@ const App: React.FC = () => {
               </button>
             </div>
           </header>
+          
+          {/* View indicator dots */}
+          <div className="flex items-center justify-center gap-2 px-6 pb-2">
+            <div className={`w-1.5 h-1.5 rounded-full transition-all ${currentView === 'today' ? 'bg-gray-900 w-6' : 'bg-gray-300'}`} />
+            <div className={`w-1.5 h-1.5 rounded-full transition-all ${currentView === 'master' ? 'bg-gray-900 w-6' : 'bg-gray-300'}`} />
+          </div>
 
-          {/* Filter Bar */}
-          <FilterBar 
-            activeFilters={filters} 
-            setFilters={setFilters} 
-            currentViewName={currentViewName}
-            onClearView={handleClearView}
-          />
+          {/* Filter Bar - only show on master view */}
+          {currentView === 'master' && (
+            <FilterBar 
+              activeFilters={filters} 
+              setFilters={setFilters} 
+              currentViewName={currentViewName}
+              onClearView={handleClearView}
+            />
+          )}
         </div>
       </div>
       
       {/* Spacer for fixed header */}
-      <div className="h-[140px]"></div>
+      <div className={currentView === 'master' ? 'h-[140px]' : 'h-[100px]'}></div>
 
       {/* Task List */}
-      <main className="flex-1 px-4 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar">
-        <div className="space-y-1 min-w-0">
-          {filteredTasks.length > 0 ? (
-            filteredTasks.map(task => (
-              <TaskCard 
-                key={task.id} 
-                task={task} 
-                onToggle={handleToggleTask} 
-                onClick={handleTaskClick}
-              />
-            ))
-          ) : (
-            <div className="flex flex-col items-center justify-center pt-20 text-center opacity-50">
-                <div className="bg-gray-200 p-4 rounded-full mb-4">
-                    <Menu className="w-8 h-8 text-gray-400" />
-                </div>
-                <p className="text-gray-500 font-medium">No tasks found</p>
-                <p className="text-sm text-gray-400">
-                  {currentViewName 
-                    ? `Your "${currentViewName}" view is empty!` 
-                    : "Try adjusting your filters or add a new task."}
-                </p>
-            </div>
-          )}
-        </div>
-      </main>
+      <AnimatePresence mode="wait">
+        <motion.main
+          key={currentView}
+          initial={{ opacity: 0, x: currentView === 'today' ? 20 : -20 }}
+          animate={{ opacity: 1, x: 0 }}
+          exit={{ opacity: 0, x: currentView === 'today' ? -20 : 20 }}
+          transition={{ duration: 0.2 }}
+          className="flex-1 px-4 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar"
+        >
+          <div className="space-y-1 min-w-0">
+            {displayTasks.length > 0 ? (
+              displayTasks.map(task => (
+                <TaskCard 
+                  key={task.id} 
+                  task={task} 
+                  onToggle={handleToggleTask} 
+                  onClick={handleTaskClick}
+                />
+              ))
+            ) : (
+              <div className="flex flex-col items-center justify-center pt-20 text-center opacity-50">
+                  <div className="bg-gray-200 p-4 rounded-full mb-4">
+                      <Menu className="w-8 h-8 text-gray-400" />
+                  </div>
+                  <p className="text-gray-500 font-medium">No tasks found</p>
+                  <p className="text-sm text-gray-400">
+                    {currentView === 'today' 
+                      ? "No tasks scheduled for today. Swipe right on a task card to add it to today's list."
+                      : currentViewName 
+                        ? `Your "${currentViewName}" view is empty!` 
+                        : "Try adjusting your filters or add a new task."}
+                  </p>
+              </div>
+            )}
+          </div>
+        </motion.main>
+      </AnimatePresence>
 
       {/* Smart Input */}
       <SmartInput 
