@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { createPortal } from 'react-dom';
 import { FilterState, DateScope, TaskStatus } from '../types';
 import { X, Sparkles, Plus, Calendar, Check, ChevronDown, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -25,6 +26,31 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
   
   const menuRef = useRef<HTMLDivElement>(null);
   const createInputRef = useRef<HTMLInputElement>(null);
+  
+  // Refs for dropdown positioning
+  const dateButtonRef = useRef<HTMLButtonElement>(null);
+  const groupButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  const addGroupButtonRef = useRef<HTMLDivElement>(null);
+  
+  // State to force re-render on scroll/resize for portal positioning
+  const [, forceUpdate] = useState(0);
+  
+  // Update dropdown positions on scroll/resize
+  useEffect(() => {
+    if (!openMenu && !isCreatingGroup) return;
+    
+    const updatePositions = () => {
+      forceUpdate(prev => prev + 1);
+    };
+    
+    window.addEventListener('scroll', updatePositions, true);
+    window.addEventListener('resize', updatePositions);
+    
+    return () => {
+      window.removeEventListener('scroll', updatePositions, true);
+      window.removeEventListener('resize', updatePositions);
+    };
+  }, [openMenu, isCreatingGroup]);
 
   // Close menu when clicking outside
   useEffect(() => {
@@ -38,8 +64,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
         return;
       }
       
-      // Check if clicking inside any dropdown menu (they have z-50)
-      const dropdown = target.closest('.z-50');
+      // Check if clicking inside any dropdown menu
+      const dropdown = target.closest('[data-dropdown-menu]');
       if (dropdown) {
         return;
       }
@@ -47,20 +73,13 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
       // Close menu if clicking outside
       setOpenMenu(null);
       if (isCreatingGroup) {
-          // If name is empty, cancel. If name exists but clicking outside, maybe save? 
-          // Standard UI pattern is usually click outside = cancel or close dropdown.
-          // Let's cancel for now to be safe, or keep it open if focused?
-          // User asked for "inline", usually implies focus loss = submit or cancel.
-          // Let's just cancel creation mode if they click completely outside the bar.
-          setIsCreatingGroup(false);
-          setNewGroupName('');
-          setNewGroupTags([]);
-          setTagSearch('');
+        setIsCreatingGroup(false);
+        setNewGroupName('');
+        setNewGroupTags([]);
+        setTagSearch('');
       }
     };
     
-    // Use click event with capture phase to catch events early
-    // Add a small delay to let button clicks process first
     const timeoutId = setTimeout(() => {
       document.addEventListener('click', handleClickOutside, true);
     }, 0);
@@ -126,7 +145,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
         id: `custom-${Date.now()}`,
         name: newGroupName.trim(),
         tags: newGroupTags.length > 0 ? newGroupTags : undefined,
-        category: newGroupTags.length === 0 ? 'domains' : undefined, // Fallback if no tags selected? Or just allow empty custom group?
+        category: newGroupTags.length === 0 ? 'domains' : undefined,
         color: 'bg-gray-100 text-gray-700 border-gray-200',
       };
       setFilterGroups(prev => [...prev, newGroup]);
@@ -171,8 +190,42 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
     }
   `;
 
+  // Helper to get dropdown position
+  const getDropdownPosition = (buttonRef: React.RefObject<HTMLElement>) => {
+    if (!buttonRef.current) return { top: 0, left: 0 };
+    const rect = buttonRef.current.getBoundingClientRect();
+    return {
+      top: rect.bottom + 8,
+      left: rect.left,
+      width: rect.width,
+    };
+  };
+
+  // Render dropdown portal
+  const renderDropdownPortal = (content: React.ReactNode, buttonRef: React.RefObject<HTMLElement> | { current: HTMLElement | null }, isOpen: boolean) => {
+    if (!isOpen || typeof window === 'undefined') return null;
+    if (!buttonRef.current) return null;
+    
+    const position = getDropdownPosition(buttonRef as React.RefObject<HTMLElement>);
+    
+    return createPortal(
+      <div
+        data-dropdown-menu
+        style={{
+          position: 'fixed',
+          top: `${position.top}px`,
+          left: `${position.left}px`,
+          zIndex: 1000,
+        }}
+      >
+        {content}
+      </div>,
+      document.body
+    );
+  };
+
   return (
-    <div className="bg-[#F3F4F6]/95 backdrop-blur-sm pt-2 pb-4 px-6 border-b border-gray-200/50 overflow-x-hidden" ref={menuRef}>
+    <div className="pt-2 pb-2 px-6" ref={menuRef}>
       <div className="flex flex-col gap-3">
         
         {/* AI View Active State */}
@@ -198,6 +251,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
               {/* Date/Time Filter */}
               <div className="relative flex-shrink-0">
                 <button
+                  ref={dateButtonRef}
                   type="button"
                   onClick={(e) => {
                     e.preventDefault();
@@ -208,65 +262,69 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                 >
                   <Calendar className={`w-3.5 h-3.5 ${!isDateActive && openMenu !== 'date' ? 'text-gray-400' : ''}`} />
                   <span>{currentDateValue}</span>
-                  <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${openMenu === 'date' ? 'rotate-180' : ''}`} />
+                  <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${openMenu === 'date' ? '' : 'rotate-180'}`} />
                 </button>
 
-                <AnimatePresence>
-                  {openMenu === 'date' && (
-                    <motion.div 
-                      initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                      transition={{ duration: 0.2, ease: "easeOut" }}
-                      className="absolute top-full left-0 mt-2 w-48 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50 origin-top-left"
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="p-1">
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDateSelect('All');
-                          }} 
-                          className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
-                        >
-                          <span>All Time</span>
-                          {activeFilters.dateScope === 'All' && <Check className="w-4 h-4 text-blue-600" />}
-                        </button>
-                        <div className="h-px bg-gray-100 my-1"></div>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDateSelect('Today');
-                          }} 
-                          className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
-                        >
-                          <span>Today</span>
-                          {activeFilters.dateScope === 'Today' && <Check className="w-4 h-4 text-blue-600" />}
-                        </button>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDateSelect('ThisWeek');
-                          }} 
-                          className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
-                        >
-                          <span>This Week</span>
-                          {activeFilters.dateScope === 'ThisWeek' && <Check className="w-4 h-4 text-blue-600" />}
-                        </button>
-                        <button 
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleDateSelect('Overdue');
-                          }} 
-                          className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
-                        >
-                          <span>Overdue</span>
-                          {activeFilters.dateScope === 'Overdue' && <Check className="w-4 h-4 text-blue-600" />}
-                        </button>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                {renderDropdownPortal(
+                  <AnimatePresence>
+                    {openMenu === 'date' && (
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                        transition={{ duration: 0.2, ease: "easeOut" }}
+                        className="w-48 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden origin-top-left"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="p-1">
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDateSelect('All');
+                            }} 
+                            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
+                          >
+                            <span>All Time</span>
+                            {activeFilters.dateScope === 'All' && <Check className="w-4 h-4 text-blue-600" />}
+                          </button>
+                          <div className="h-px bg-gray-100 my-1"></div>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDateSelect('Today');
+                            }} 
+                            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
+                          >
+                            <span>Today</span>
+                            {activeFilters.dateScope === 'Today' && <Check className="w-4 h-4 text-blue-600" />}
+                          </button>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDateSelect('ThisWeek');
+                            }} 
+                            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
+                          >
+                            <span>This Week</span>
+                            {activeFilters.dateScope === 'ThisWeek' && <Check className="w-4 h-4 text-blue-600" />}
+                          </button>
+                          <button 
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              handleDateSelect('Overdue');
+                            }} 
+                            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
+                          >
+                            <span>Overdue</span>
+                            {activeFilters.dateScope === 'Overdue' && <Check className="w-4 h-4 text-blue-600" />}
+                          </button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>,
+                  dateButtonRef,
+                  openMenu === 'date'
+                )}
               </div>
 
               {/* Filter Group Pills */}
@@ -277,9 +335,14 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                 const groupColor = group.color || 'bg-gray-100 text-gray-700 border-gray-200';
                 const categoryTags = group.tags || (group.category ? TAG_CATEGORIES[group.category] : []);
                 
+                if (!groupButtonRefs.current[group.id]) {
+                  groupButtonRefs.current[group.id] = null;
+                }
+                
                 return (
                   <div key={group.id} className="relative flex-shrink-0">
                     <button
+                      ref={(el) => { groupButtonRefs.current[group.id] = el; }}
                       type="button"
                       onClick={(e) => {
                         e.preventDefault();
@@ -302,74 +365,81 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                           {selectedTags.length}
                         </span>
                       )}
-                      <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
+                      <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${isOpen ? '' : 'rotate-180'}`} />
                     </button>
 
-                    <AnimatePresence>
-                      {isOpen && categoryTags.length > 0 && (
-                        <motion.div 
-                          initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                          animate={{ opacity: 1, y: 0, scale: 1 }}
-                          exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                          transition={{ duration: 0.2, ease: "easeOut" }}
-                          className="absolute top-full left-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden z-50 origin-top-left"
-                          onMouseDown={(e) => {
-                            e.stopPropagation();
-                            e.preventDefault();
-                          }}
-                          onClick={(e) => {
-                            e.stopPropagation();
-                          }}
-                        >
-                          <div className="p-1">
-                            <div className="space-y-0.5 max-h-64 overflow-y-auto custom-scrollbar">
-                              {categoryTags.length > 0 ? (
-                                categoryTags.map(tag => {
-                                  const isSelected = selectedTags.includes(tag);
-                                  const tagMetadata = getTagMetadata(tag);
-                                  return (
-                                    <button
-                                      key={tag}
-                                      type="button"
-                                      onClick={(e) => {
-                                        e.stopPropagation();
-                                        handleCategoryTagToggle(group.id, tag);
-                                      }}
-                                      className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
-                                    >
-                                      <div className="flex items-center gap-2">
-                                        <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isSelected ? 'bg-blue-600' : 'bg-gray-300'}`} />
-                                        <span className={isSelected ? tagMetadata.color.split(' ')[1] || 'text-gray-700' : 'text-gray-700'}>
-                                          {tagMetadata.label}
-                                        </span>
-                                      </div>
-                                      {isSelected && <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />}
-                                    </button>
-                                  );
-                                })
-                              ) : (
-                                <div className="px-3 py-2 text-sm text-gray-400 text-center">
-                                  No tags available
+                    {(() => {
+                      const buttonRef = { current: groupButtonRefs.current[group.id] };
+                      return renderDropdownPortal(
+                        <AnimatePresence>
+                          {isOpen && categoryTags.length > 0 && (
+                            <motion.div 
+                              initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                              animate={{ opacity: 1, y: 0, scale: 1 }}
+                              exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                              transition={{ duration: 0.2, ease: "easeOut" }}
+                              className="w-64 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden origin-top-left"
+                              onMouseDown={(e) => {
+                                e.stopPropagation();
+                                e.preventDefault();
+                              }}
+                              onClick={(e) => {
+                                e.stopPropagation();
+                              }}
+                            >
+                              <div className="p-1">
+                                <div className="space-y-0.5 max-h-64 overflow-y-auto custom-scrollbar">
+                                  {categoryTags.length > 0 ? (
+                                    categoryTags.map(tag => {
+                                      const isSelected = selectedTags.includes(tag);
+                                      const tagMetadata = getTagMetadata(tag);
+                                      return (
+                                        <button
+                                          key={tag}
+                                          type="button"
+                                          onClick={(e) => {
+                                            e.stopPropagation();
+                                            handleCategoryTagToggle(group.id, tag);
+                                          }}
+                                          className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
+                                        >
+                                          <div className="flex items-center gap-2">
+                                            <div className={`w-2 h-2 rounded-full flex-shrink-0 ${isSelected ? 'bg-blue-600' : 'bg-gray-300'}`} />
+                                            <span className={isSelected ? tagMetadata.color.split(' ')[1] || 'text-gray-700' : 'text-gray-700'}>
+                                              {tagMetadata.label}
+                                            </span>
+                                          </div>
+                                          {isSelected && <Check className="w-4 h-4 text-blue-600 flex-shrink-0" />}
+                                        </button>
+                                      );
+                                    })
+                                  ) : (
+                                    <div className="px-3 py-2 text-sm text-gray-400 text-center">
+                                      No tags available
+                                    </div>
+                                  )}
                                 </div>
-                              )}
-                            </div>
-                            {selectedTags.length > 0 && (
-                                <div className="border-t border-gray-50 mt-1 pt-1">
-                                  <button
-                                    onClick={(e) => {
-                                      e.stopPropagation();
-                                      handleCategoryClear(group.id);
-                                    }}
-                                    className="w-full text-center text-xs text-gray-400 hover:text-gray-600 px-2 py-2 transition-colors"
-                                  >
-                                    Clear Selection
-                                  </button>
-                                </div>
-                            )}
-                          </div>
-                        </motion.div>
-                      )}
-                    </AnimatePresence>
+                                {selectedTags.length > 0 && (
+                                    <div className="border-t border-gray-50 mt-1 pt-1">
+                                      <button
+                                        onClick={(e) => {
+                                          e.stopPropagation();
+                                          handleCategoryClear(group.id);
+                                        }}
+                                        className="w-full text-center text-xs text-gray-400 hover:text-gray-600 px-2 py-2 transition-colors"
+                                      >
+                                        Clear Selection
+                                      </button>
+                                    </div>
+                                )}
+                              </div>
+                            </motion.div>
+                          )}
+                        </AnimatePresence>,
+                        buttonRef,
+                        isOpen
+                      );
+                    })()}
                   </div>
                 );
               })}
@@ -385,7 +455,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                     <span>Add Group</span>
                   </button>
                 ) : (
-                  <div className="relative z-50">
+                  <div ref={addGroupButtonRef} className="relative z-50">
                     <div className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap bg-white border-gray-300 ring-2 ring-blue-100">
                       <input
                         ref={createInputRef}
@@ -415,54 +485,58 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                       </div>
                     </div>
 
-                    <motion.div 
-                      initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                      animate={{ opacity: 1, y: 0, scale: 1 }}
-                      className="absolute top-full left-0 mt-2 w-64 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden origin-top-left"
-                      onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <div className="p-2 border-b border-gray-100">
-                        <div className="relative">
-                          <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                          <input 
-                            type="text"
-                            value={tagSearch}
-                            onChange={(e) => setTagSearch(e.target.value)}
-                            placeholder="Search tags..."
-                            className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all"
-                            onClick={(e) => e.stopPropagation()}
-                          />
+                    {renderDropdownPortal(
+                      <motion.div 
+                        initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                        animate={{ opacity: 1, y: 0, scale: 1 }}
+                        className="w-64 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden origin-top-left"
+                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <div className="p-2 border-b border-gray-100">
+                          <div className="relative">
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                            <input 
+                              type="text"
+                              value={tagSearch}
+                              onChange={(e) => setTagSearch(e.target.value)}
+                              placeholder="Search tags..."
+                              className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all"
+                              onClick={(e) => e.stopPropagation()}
+                            />
+                          </div>
                         </div>
-                      </div>
-                      <div className="p-1 max-h-64 overflow-y-auto custom-scrollbar">
-                        {getAllTags().filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).map(tag => {
-                          const isSelected = newGroupTags.includes(tag);
-                          const meta = getTagMetadata(tag);
-                          return (
-                            <button
-                              key={tag}
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                setNewGroupTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
-                              }}
-                              className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
-                            >
-                              <div className="flex items-center gap-2">
-                                <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-blue-600' : 'bg-gray-300'}`} />
-                                <span className={isSelected ? meta.color.split(' ')[1] || 'text-gray-900' : 'text-gray-700'}>
-                                  {meta.label}
-                                </span>
-                              </div>
-                              {isSelected && <Check className="w-3.5 h-3.5 text-blue-600" />}
-                            </button>
-                          );
-                        })}
-                        {getAllTags().filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).length === 0 && (
-                          <div className="text-center py-4 text-gray-400 text-xs">No matching tags</div>
-                        )}
-                      </div>
-                    </motion.div>
+                        <div className="p-1 max-h-64 overflow-y-auto custom-scrollbar">
+                          {getAllTags().filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).map(tag => {
+                            const isSelected = newGroupTags.includes(tag);
+                            const meta = getTagMetadata(tag);
+                            return (
+                              <button
+                                key={tag}
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  setNewGroupTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+                                }}
+                                className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
+                              >
+                                <div className="flex items-center gap-2">
+                                  <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-blue-600' : 'bg-gray-300'}`} />
+                                  <span className={isSelected ? meta.color.split(' ')[1] || 'text-gray-900' : 'text-gray-700'}>
+                                    {meta.label}
+                                  </span>
+                                </div>
+                                {isSelected && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                              </button>
+                            );
+                          })}
+                          {getAllTags().filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).length === 0 && (
+                            <div className="text-center py-4 text-gray-400 text-xs">No matching tags</div>
+                          )}
+                        </div>
+                      </motion.div>,
+                      addGroupButtonRef,
+                      isCreatingGroup
+                    )}
                   </div>
                 )}
               </div>

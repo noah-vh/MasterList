@@ -62,27 +62,56 @@ const App: React.FC = () => {
     return dateStr === todayStr;
   };
 
-  // Today view filtering - tasks with actionDate = today
+  // Today view filtering - tasks with actionDate = today, plus filter bar filters
   const todayTasks = useMemo(() => {
     const today = new Date();
     const todayStr = today.toISOString().split('T')[0];
     
     const filtered = tasks.filter(task => {
+      // First filter: must have actionDate = today
       if (!task.actionDate) return false;
-      // Handle both YYYY-MM-DD format and full ISO strings
       const taskDateStr = task.actionDate.includes('T') 
         ? task.actionDate.split('T')[0] 
         : task.actionDate;
-      return taskDateStr === todayStr;
+      if (taskDateStr !== todayStr) return false;
+      
+      // Apply filter bar filters
+      // 1. Status filter
+      const matchesStatus = filters.status.length === 0 || filters.status.includes(task.status);
+      if (!matchesStatus) return false;
+      
+      // 2. Tag filter (AND logic - task must have ALL selected tags)
+      const matchesTags = filters.tags.length === 0 || 
+        filters.tags.every(tag => task.tags.includes(tag));
+      if (!matchesTags) return false;
+      
+      // 3. Date scope filter (for today view, this is less relevant but we'll apply it)
+      // Note: Today view already filters by today's date, so dateScope filter is mostly redundant
+      // but we'll respect it for consistency
+      let matchesDate = true;
+      if (filters.dateScope !== 'All') {
+        const targetDate = task.actionDate ? new Date(task.actionDate) : new Date(task.createdAt);
+        const todayDate = new Date();
+        todayDate.setHours(0, 0, 0, 0);
+        
+        const isSameDay = (d1: Date, d2: Date) => 
+          d1.getFullYear() === d2.getFullYear() &&
+          d1.getMonth() === d2.getMonth() &&
+          d1.getDate() === d2.getDate();
+
+        if (filters.dateScope === 'Today') {
+          matchesDate = isSameDay(targetDate, todayDate);
+        } else if (filters.dateScope === 'ThisWeek') {
+          const nextWeek = new Date(todayDate);
+          nextWeek.setDate(todayDate.getDate() + 7);
+          matchesDate = targetDate >= todayDate && targetDate <= nextWeek;
+        } else if (filters.dateScope === 'Overdue') {
+          matchesDate = targetDate < todayDate && !isSameDay(targetDate, todayDate) && !task.isCompleted;
+        }
+      }
+      
+      return matchesStatus && matchesTags && matchesDate;
     });
-    
-    console.log('Today tasks:', filtered.length, 'out of', tasks.length, 'tasks');
-    console.log('Today date:', todayStr);
-    const tasksWithDates = tasks.filter(t => t.actionDate).map(t => {
-      const taskDateStr = t.actionDate.includes('T') ? t.actionDate.split('T')[0] : t.actionDate;
-      return { id: t.id, actionDate: t.actionDate, parsed: taskDateStr, matches: taskDateStr === todayStr };
-    });
-    console.log('Tasks with actionDate:', tasksWithDates);
     
     return filtered
       .sort((a, b) => {
@@ -102,7 +131,7 @@ const App: React.FC = () => {
         // Tertiary: By createdAt (newest first)
         return b.createdAt - a.createdAt;
       });
-  }, [tasks]);
+  }, [tasks, filters]);
 
   // Filter Logic - Tag-based faceted filtering with AND logic
   const filteredTasks = useMemo(() => {
@@ -359,6 +388,41 @@ const App: React.FC = () => {
     };
   }, [todayTasks]);
 
+  // Calculate master list stats
+  const masterStats = useMemo(() => {
+    const activeTasks = filteredTasks.filter(t => !t.isCompleted);
+    const completedTasks = filteredTasks.filter(t => t.isCompleted);
+    const totalTime = activeTasks.reduce((sum, task) => {
+      if (task.timeEstimate) {
+        const match = task.timeEstimate.match(/(\d+)\s*(?:hour|hr|h|minute|min|m)/i);
+        if (match) {
+          const num = parseInt(match[1]);
+          const unit = match[0].toLowerCase();
+          if (unit.includes('hour') || unit.includes('hr') || unit.includes('h')) {
+            return sum + num * 60;
+          } else {
+            return sum + num;
+          }
+        }
+      }
+      return sum;
+    }, 0);
+    
+    // Count tasks by status
+    const statusCounts = filteredTasks.reduce((acc, task) => {
+      acc[task.status] = (acc[task.status] || 0) + 1;
+      return acc;
+    }, {} as Record<TaskStatus, number>);
+    
+    return {
+      total: filteredTasks.length,
+      active: activeTasks.length,
+      completed: completedTasks.length,
+      timeEstimate: totalTime > 0 ? `${Math.round(totalTime / 60 * 10) / 10}h` : null,
+      hasFilters: filters.tags.length > 0 || filters.status.length > 0 || filters.dateScope !== 'All',
+    };
+  }, [filteredTasks, filters]);
+
   return (
     <div 
       ref={containerRef}
@@ -370,22 +434,100 @@ const App: React.FC = () => {
     >
       
       {/* Fixed Header + Filter Container */}
-      <div className="fixed top-0 left-0 right-0 z-20 bg-[#F3F4F6]">
-        <div className="max-w-2xl mx-auto">
+      <div className="fixed top-0 left-0 right-0 z-20 pointer-events-none">
+        {/* Unified Background with Blur and Fade */}
+        <div 
+          className="absolute inset-0 bg-[#F3F4F6]/85 backdrop-blur-xl"
+          style={{ 
+            height: '140px', 
+            maskImage: 'linear-gradient(to bottom, black 85%, transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, black 85%, transparent 100%)'
+          }}
+        />
+        
+        <div className="max-w-2xl mx-auto relative pointer-events-auto">
           {/* Header */}
-          <header className="flex items-center justify-between p-6 pb-2 shrink-0">
-            <div className="flex-1">
-              <h1 className="text-2xl font-bold text-gray-900 tracking-tight">
-                {currentView === 'today' ? "Today's List" : 'Master List'}
-              </h1>
-              {currentView === 'today' && todayStats.count > 0 && (
-                <p className="text-xs text-gray-500 mt-1">
-                  {todayStats.count} task{todayStats.count !== 1 ? 's' : ''}
-                  {todayStats.timeEstimate && ` • ${todayStats.timeEstimate}`}
-                </p>
-              )}
+          <header className="flex items-center justify-between p-6 pb-3 shrink-0 relative z-10">
+            <div className="flex-1 flex items-center gap-4 min-w-0">
+              <div className="relative flex-shrink-0">
+                <AnimatePresence mode="wait" initial={false}>
+                  {currentView === 'today' ? (
+                    <motion.h1
+                      key="today"
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      transition={{ duration: 0.25, ease: "easeInOut" }}
+                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap"
+                    >
+                      Today's List
+                    </motion.h1>
+                  ) : (
+                    <motion.h1
+                      key="master"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 20 }}
+                      transition={{ duration: 0.25, ease: "easeInOut" }}
+                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap"
+                    >
+                      Master List
+                    </motion.h1>
+                  )}
+                </AnimatePresence>
+              </div>
+              {/* Meta info */}
+              <div className="relative">
+                <AnimatePresence mode="wait" initial={false}>
+                  {currentView === 'today' ? (
+                    <motion.div
+                      key="today-stats"
+                      initial={{ opacity: 0, x: -20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: -20 }}
+                      transition={{ duration: 0.25, ease: "easeInOut" }}
+                      className="text-xs text-gray-500 whitespace-nowrap"
+                    >
+                      {todayStats.count > 0 ? (
+                        <>
+                          {todayStats.count} active
+                          {todayStats.timeEstimate && ` • ${todayStats.timeEstimate}`}
+                        </>
+                      ) : (
+                        <span className="text-gray-400">No tasks</span>
+                      )}
+                    </motion.div>
+                  ) : (
+                    <motion.div
+                      key="master-stats"
+                      initial={{ opacity: 0, x: 20 }}
+                      animate={{ opacity: 1, x: 0 }}
+                      exit={{ opacity: 0, x: 20 }}
+                      transition={{ duration: 0.25, ease: "easeInOut" }}
+                      className="text-xs text-gray-500 whitespace-nowrap"
+                    >
+                      {masterStats.total > 0 ? (
+                        <>
+                          {masterStats.active} active
+                          {masterStats.completed > 0 && ` • ${masterStats.completed} done`}
+                          {masterStats.timeEstimate && ` • ${masterStats.timeEstimate}`}
+                        </>
+                      ) : (
+                        <span className="text-gray-400">
+                          {masterStats.hasFilters ? 'No matches' : 'Empty'}
+                        </span>
+                      )}
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
             </div>
-            <div className="flex items-center gap-4 text-gray-500">
+            <div className="flex items-center gap-4 text-gray-500 flex-shrink-0">
+              {/* View indicator dots - moved to right */}
+              <div className="flex items-center gap-1.5">
+                <div className={`h-1.5 rounded-full transition-all ${currentView === 'today' ? 'bg-gray-900 w-6' : 'bg-gray-300 w-1.5'}`} />
+                <div className={`h-1.5 rounded-full transition-all ${currentView === 'master' ? 'bg-gray-900 w-6' : 'bg-gray-300 w-1.5'}`} />
+              </div>
               <button className="hover:text-gray-900 transition-colors">
                 <Search className="w-6 h-6" />
               </button>
@@ -395,66 +537,95 @@ const App: React.FC = () => {
               </button>
             </div>
           </header>
-          
-          {/* View indicator dots */}
-          <div className="flex items-center justify-center gap-2 px-6 pb-2">
-            <div className={`w-1.5 h-1.5 rounded-full transition-all ${currentView === 'today' ? 'bg-gray-900 w-6' : 'bg-gray-300'}`} />
-            <div className={`w-1.5 h-1.5 rounded-full transition-all ${currentView === 'master' ? 'bg-gray-900 w-6' : 'bg-gray-300'}`} />
-          </div>
 
-          {/* Filter Bar - only show on master view */}
-          {currentView === 'master' && (
+          {/* Filter Bar - persistent across views */}
+          <div className="relative z-10">
             <FilterBar 
               activeFilters={filters} 
               setFilters={setFilters} 
               currentViewName={currentViewName}
               onClearView={handleClearView}
             />
-          )}
+          </div>
         </div>
       </div>
       
       {/* Spacer for fixed header */}
-      <div className={currentView === 'master' ? 'h-[140px]' : 'h-[100px]'}></div>
+      <div className="h-[160px]"></div>
 
-      {/* Task List */}
-      <AnimatePresence mode="wait">
-        <motion.main
-          key={currentView}
-          initial={{ opacity: 0, x: currentView === 'today' ? 20 : -20 }}
-          animate={{ opacity: 1, x: 0 }}
-          exit={{ opacity: 0, x: currentView === 'today' ? -20 : 20 }}
-          transition={{ duration: 0.2 }}
-          className="flex-1 px-4 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar"
+      {/* Task List Carousel */}
+      <div className="flex-1 relative overflow-hidden min-h-0">
+        <motion.div
+          className="flex h-full"
+          animate={{
+            x: currentView === 'today' ? 0 : '-50%',
+          }}
+          transition={{
+            type: "spring",
+            stiffness: 300,
+            damping: 30,
+            mass: 0.8,
+          }}
+          style={{
+            width: '200%',
+            height: '100%',
+          }}
         >
-          <div className="space-y-1 min-w-0">
-            {displayTasks.length > 0 ? (
-              displayTasks.map(task => (
-                <TaskCard 
-                  key={task.id} 
-                  task={task} 
-                  onToggle={handleToggleTask} 
-                  onClick={handleTaskClick}
-                />
-              ))
-            ) : (
-              <div className="flex flex-col items-center justify-center pt-20 text-center opacity-50">
+          {/* Today View */}
+          <main className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '50%' }}>
+            <div className="space-y-1 min-w-0">
+              {todayTasks.length > 0 ? (
+                todayTasks.map(task => (
+                  <TaskCard 
+                    key={task.id} 
+                    task={task} 
+                    onToggle={handleToggleTask} 
+                    onClick={handleTaskClick}
+                  />
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center pt-20 text-center opacity-50">
                   <div className="bg-gray-200 p-4 rounded-full mb-4">
-                      <Menu className="w-8 h-8 text-gray-400" />
+                    <Menu className="w-8 h-8 text-gray-400" />
                   </div>
                   <p className="text-gray-500 font-medium">No tasks found</p>
                   <p className="text-sm text-gray-400">
-                    {currentView === 'today' 
-                      ? "No tasks scheduled for today. Swipe right on a task card to add it to today's list."
-                      : currentViewName 
-                        ? `Your "${currentViewName}" view is empty!` 
-                        : "Try adjusting your filters or add a new task."}
+                    No tasks scheduled for today. Swipe right on a task card to add it to today's list.
                   </p>
-              </div>
-            )}
-          </div>
-        </motion.main>
-      </AnimatePresence>
+                </div>
+              )}
+            </div>
+          </main>
+
+          {/* Master View */}
+          <main className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '50%' }}>
+            <div className="space-y-1 min-w-0">
+              {filteredTasks.length > 0 ? (
+                filteredTasks.map(task => (
+                  <TaskCard 
+                    key={task.id} 
+                    task={task} 
+                    onToggle={handleToggleTask} 
+                    onClick={handleTaskClick}
+                  />
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center pt-20 text-center opacity-50">
+                  <div className="bg-gray-200 p-4 rounded-full mb-4">
+                    <Menu className="w-8 h-8 text-gray-400" />
+                  </div>
+                  <p className="text-gray-500 font-medium">No tasks found</p>
+                  <p className="text-sm text-gray-400">
+                    {currentViewName 
+                      ? `Your "${currentViewName}" view is empty!` 
+                      : "Try adjusting your filters or add a new task."}
+                  </p>
+                </div>
+              )}
+            </div>
+          </main>
+        </motion.div>
+      </div>
 
       {/* Smart Input */}
       <SmartInput 

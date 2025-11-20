@@ -1,10 +1,11 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, X, Loader2, LayoutTemplate, CheckCircle2, ChevronRight, Plus, Calendar, Clock } from 'lucide-react';
+import { ArrowUp, X, Loader2, LayoutTemplate, CheckCircle2, ChevronRight, Plus, Calendar, Clock, Sparkles, PenTool } from 'lucide-react';
 import { useAction } from 'convex/react';
 import { api } from '../convex/_generated/api';
 import { AIResponse, ExtractedTaskData, GeneratedViewData } from '../types';
 import { TagInput } from './TagInput';
 import { getTagMetadata } from '../constants';
+import { TaskCreateModal } from './TaskCreateModal';
 
 interface SmartInputProps {
   onAddTask: (data: ExtractedTaskData) => void;
@@ -31,6 +32,9 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
   const [isProcessing, setIsProcessing] = useState(false);
   const [aiResponse, setAiResponse] = useState<AIResponse | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const [isInstantMode, setIsInstantMode] = useState(false);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [modalInitialTitle, setModalInitialTitle] = useState('');
 
   // Local state for editable task data
   const [editableTaskData, setEditableTaskData] = useState<ExtractedTaskData | null>(null);
@@ -148,6 +152,15 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
     e.preventDefault();
     if (!input.trim()) return;
 
+    // If instant mode is enabled, open the create modal directly
+    if (isInstantMode) {
+      const inputText = input.trim();
+      setModalInitialTitle(inputText);
+      setInput('');
+      setShowCreateModal(true);
+      return;
+    }
+
     setIsProcessing(true);
     try {
       const result = await parseUserIntent({ input });
@@ -184,6 +197,16 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
         taskData: null,
         viewData: null,
       });
+    }
+  };
+
+  const handleModalSave = async (data: ExtractedTaskData) => {
+    try {
+      await onAddTask(data);
+      setShowCreateModal(false);
+    } catch (error) {
+      console.error("Error creating task:", error);
+      alert(`Error creating task: ${error instanceof Error ? error.message : 'Unknown error'}`);
     }
   };
 
@@ -695,8 +718,18 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
   );
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 p-4 bg-gradient-to-t from-[#F3F4F6] via-[#F3F4F6] to-transparent pb-6 pt-12 z-20">
-      <div className="max-w-2xl mx-auto relative">
+    <div className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none">
+      {/* Gradient Fade Background */}
+      <div 
+        className="absolute inset-0 bg-[#F3F4F6]/85 backdrop-blur-xl"
+        style={{
+          maskImage: 'linear-gradient(to top, black 60%, transparent 100%)',
+          WebkitMaskImage: 'linear-gradient(to top, black 60%, transparent 100%)'
+        }}
+      />
+      
+      <div className="relative p-4 pb-6 pt-12 pointer-events-auto">
+        <div className="max-w-2xl mx-auto relative">
         
         {/* AI Confirmation Card */}
         {aiResponse && (
@@ -791,6 +824,37 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
 
         {/* Main Input Bar */}
         <form onSubmit={handleSubmit} className="relative shadow-lg rounded-full group bg-white">
+          {/* Instant Entry Toggle */}
+          <button
+            type="button"
+            onClick={() => setIsInstantMode(!isInstantMode)}
+            className={`
+              absolute left-2 top-2 bottom-2 aspect-square rounded-full flex items-center justify-center transition-all duration-300
+              ${isInstantMode 
+                ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' 
+                : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200 hover:text-gray-700'
+              }
+            `}
+            title={isInstantMode ? "Instant entry mode: Skip AI classification" : "Auto mode: AI classifies your input"}
+          >
+            <div className="relative w-5 h-5 flex items-center justify-center">
+              <PenTool 
+                className={`w-5 h-5 absolute transition-all duration-300 ${
+                  isInstantMode 
+                    ? 'opacity-100 scale-100 rotate-0' 
+                    : 'opacity-0 scale-75 rotate-90'
+                }`}
+              />
+              <Sparkles 
+                className={`w-5 h-5 absolute transition-all duration-300 ${
+                  !isInstantMode 
+                    ? 'opacity-100 scale-100 rotate-0' 
+                    : 'opacity-0 scale-75 -rotate-90'
+                }`}
+              />
+            </div>
+          </button>
+          
           <input
             ref={inputRef}
             type="text"
@@ -798,7 +862,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
             onChange={(e) => setInput(e.target.value)}
             placeholder="Add a task or tell me how you feel..."
             disabled={isProcessing || !!aiResponse}
-            className="w-full pl-6 pr-14 py-4 rounded-full border-none focus:ring-2 focus:ring-blue-500/20 outline-none text-base text-gray-800 placeholder-gray-400 bg-white disabled:bg-gray-50 disabled:text-gray-400 transition-all"
+            className="w-full pl-14 pr-14 py-4 rounded-full border-none focus:ring-2 focus:ring-blue-500/20 outline-none text-base text-gray-800 placeholder-gray-400 bg-white disabled:bg-gray-50 disabled:text-gray-400 transition-all"
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
@@ -821,6 +885,16 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
             )}
           </button>
         </form>
+        
+        {/* Task Create Modal */}
+        {showCreateModal && (
+          <TaskCreateModal
+            initialTitle={modalInitialTitle}
+            onSave={handleModalSave}
+            onClose={() => setShowCreateModal(false)}
+          />
+        )}
+      </div>
       </div>
     </div>
   );
