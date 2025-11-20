@@ -14,7 +14,8 @@ dist-ssr
 .env.local
 
 # Convex
-convex/_generated/
+# Note: _generated files are committed for Vercel builds
+# convex/_generated/
 
 # API Keys and Secrets
 *API_KEY*
