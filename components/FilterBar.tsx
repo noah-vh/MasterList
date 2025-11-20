@@ -225,7 +225,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
   };
 
   return (
-    <div className="pt-2 pb-2 px-6" ref={menuRef}>
+    <div className="pt-2 pb-1 px-4" ref={menuRef}>
       <div className="flex flex-col gap-3">
         
         {/* AI View Active State */}
@@ -245,8 +245,14 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
         ) : (
           <>
             {/* Filter Groups Row */}
-            <div className="-mx-6">
-              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-6 pb-2">
+            <div className="-mx-4">
+              <div 
+                className="flex items-center gap-2 overflow-x-auto no-scrollbar px-4 pb-2"
+                style={{
+                  maskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent)',
+                  WebkitMaskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent)'
+                }}
+              >
               
               {/* Date/Time Filter */}
               <div className="relative flex-shrink-0">

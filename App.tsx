@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useRef } from 'react';
+import React, { useState, useMemo, useRef, useEffect } from 'react';
 import { Search, Bell, Menu } from 'lucide-react';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from './convex/_generated/api';
@@ -53,6 +53,19 @@ const App: React.FC = () => {
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
+  
+  // Scroll position tracking for each view
+  const todayScrollRef = useRef<HTMLMainElement>(null);
+  const masterScrollRef = useRef<HTMLMainElement>(null);
+  const scrollPositions = useRef<{ today: number; master: number }>({ today: 0, master: 0 });
+
+// Shared spring transition for unified feel
+const SPRING_TRANSITION = {
+  type: "spring",
+  stiffness: 350,
+  damping: 25,
+  mass: 0.5,
+};
 
   // Helper to check if date is today
   const isToday = (dateStr: string | undefined): boolean => {
@@ -388,6 +401,34 @@ const App: React.FC = () => {
     };
   }, [todayTasks]);
 
+  // Simplified scroll position handling
+  useEffect(() => {
+    // When switching views, we just need to make sure we aren't scrolled into empty space
+    // The independent scroll containers (overflow-y-auto on each main) handle their own scroll state naturally
+    // We just need to check bounds when switching back to a potentially shorter list
+    
+    const timeoutId = setTimeout(() => {
+      const targetRef = currentView === 'today' ? todayScrollRef.current : masterScrollRef.current;
+      if (!targetRef) return;
+      
+      const scrollHeight = targetRef.scrollHeight;
+      const clientHeight = targetRef.clientHeight;
+      const scrollTop = targetRef.scrollTop;
+      const maxScroll = Math.max(0, scrollHeight - clientHeight);
+      
+      // If we're scrolled past the bottom (because the list changed size or we restored a bad position), clamp it
+      if (scrollTop > maxScroll) {
+        targetRef.scrollTop = maxScroll;
+      }
+    }, 50); // Short delay to let layout settle
+    
+    return () => clearTimeout(timeoutId);
+  }, [currentView, todayTasks.length, filteredTasks.length]);
+
+  // We don't need complex manual scroll tracking/restoring anymore because 
+  // the <main> elements persist in the DOM within the carousel
+  // keeping their scroll positions automatically.
+
   // Calculate master list stats
   const masterStats = useMemo(() => {
     const activeTasks = filteredTasks.filter(t => !t.isCompleted);
@@ -430,7 +471,7 @@ const App: React.FC = () => {
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       onMouseDown={handleMouseDown}
-      className="min-h-screen flex flex-col max-w-2xl mx-auto bg-[#F3F4F6] overflow-x-hidden relative select-none"
+      className="h-[100dvh] flex flex-col max-w-2xl mx-auto bg-[#F3F4F6] overflow-hidden relative select-none"
     >
       
       {/* Fixed Header + Filter Container */}
@@ -439,95 +480,137 @@ const App: React.FC = () => {
         <div 
           className="absolute inset-0 bg-[#F3F4F6]/85 backdrop-blur-xl"
           style={{ 
-            height: '140px', 
-            maskImage: 'linear-gradient(to bottom, black 85%, transparent 100%)',
-            WebkitMaskImage: 'linear-gradient(to bottom, black 85%, transparent 100%)'
+            maskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)',
+            WebkitMaskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)'
           }}
         />
         
-        <div className="max-w-2xl mx-auto relative pointer-events-auto">
+        <div className="max-w-2xl mx-auto relative pointer-events-auto pb-8">
           {/* Header */}
-          <header className="flex items-center justify-between p-6 pb-3 shrink-0 relative z-10">
-            <div className="flex-1 flex items-center gap-4 min-w-0">
-              <div className="relative flex-shrink-0">
-                <AnimatePresence mode="wait" initial={false}>
-                  {currentView === 'today' ? (
-                    <motion.h1
-                      key="today"
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -20 }}
-                      transition={{ duration: 0.25, ease: "easeInOut" }}
-                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap"
+          <header className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 relative z-10">
+            <div className="flex-1 min-w-0 flex flex-col justify-center">
+              <div className="flex items-start gap-2 h-8"> {/* Restored fixed height for consistent vertical alignment */}
+                {/* Today Section */}
+                <motion.div 
+                  className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full" // Center content vertically
+                  onClick={() => setCurrentView('today')}
+                  animate={{ 
+                    width: currentView === 'today' ? 'auto' : '6px',
+                  }}
+                  transition={SPRING_TRANSITION}
+                >
+                  <div className="flex items-center h-6 relative">
+                    {/* Background bar - only visible when inactive */}
+                    {currentView !== 'today' && (
+                      <motion.div
+                        className="absolute left-0 top-0 bottom-0 w-1.5 bg-gray-300 group-hover:bg-gray-400 rounded-full transition-colors"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={SPRING_TRANSITION}
+                      />
+                    )}
+                    
+                    {/* Title text */}
+                    <motion.h1 
+                      animate={{ 
+                        opacity: currentView === 'today' ? 1 : 0,
+                        scaleX: currentView === 'today' ? 1 : 0,
+                        x: currentView === 'today' ? 0 : -15 
+                      }}
+                      transition={SPRING_TRANSITION}
+                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
                     >
                       Today's List
                     </motion.h1>
-                  ) : (
-                    <motion.h1
-                      key="master"
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 20 }}
-                      transition={{ duration: 0.25, ease: "easeInOut" }}
-                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap"
+                  </div>
+
+                  {/* Meta Info - Anchored to Today title */}
+                  <AnimatePresence>
+                    {currentView === 'today' && (
+                      <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        transition={SPRING_TRANSITION}
+                        className="text-xs text-gray-500 whitespace-nowrap absolute top-full mt-0.5 pl-0.5 left-0" // Absolute positioning to not affect height
+                      >
+                        {todayStats.count > 0 ? (
+                          <>
+                            {todayStats.count} active
+                            {todayStats.timeEstimate && ` • ${todayStats.timeEstimate}`}
+                          </>
+                        ) : (
+                          <span className="text-gray-400">No tasks</span>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+
+                {/* Master Section */}
+                <motion.div 
+                  className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full" // Center content vertically
+                  onClick={() => setCurrentView('master')}
+                  animate={{ 
+                    width: currentView === 'master' ? 'auto' : '6px',
+                  }}
+                  transition={SPRING_TRANSITION}
+                >
+                  <div className="flex items-center h-6 relative">
+                    {/* Background bar - only visible when inactive */}
+                    {currentView !== 'master' && (
+                      <motion.div
+                        className="absolute left-0 top-0 bottom-0 w-1.5 bg-gray-300 group-hover:bg-gray-400 rounded-full transition-colors"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={SPRING_TRANSITION}
+                      />
+                    )}
+                    
+                    {/* Title text */}
+                    <motion.h1 
+                      animate={{ 
+                        opacity: currentView === 'master' ? 1 : 0,
+                        scaleX: currentView === 'master' ? 1 : 0,
+                        x: currentView === 'master' ? 0 : -15 
+                      }}
+                      transition={SPRING_TRANSITION}
+                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
                     >
                       Master List
                     </motion.h1>
-                  )}
-                </AnimatePresence>
-              </div>
-              {/* Meta info */}
-              <div className="relative">
-                <AnimatePresence mode="wait" initial={false}>
-                  {currentView === 'today' ? (
-                    <motion.div
-                      key="today-stats"
-                      initial={{ opacity: 0, x: -20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: -20 }}
-                      transition={{ duration: 0.25, ease: "easeInOut" }}
-                      className="text-xs text-gray-500 whitespace-nowrap"
-                    >
-                      {todayStats.count > 0 ? (
-                        <>
-                          {todayStats.count} active
-                          {todayStats.timeEstimate && ` • ${todayStats.timeEstimate}`}
-                        </>
-                      ) : (
-                        <span className="text-gray-400">No tasks</span>
-                      )}
-                    </motion.div>
-                  ) : (
-                    <motion.div
-                      key="master-stats"
-                      initial={{ opacity: 0, x: 20 }}
-                      animate={{ opacity: 1, x: 0 }}
-                      exit={{ opacity: 0, x: 20 }}
-                      transition={{ duration: 0.25, ease: "easeInOut" }}
-                      className="text-xs text-gray-500 whitespace-nowrap"
-                    >
-                      {masterStats.total > 0 ? (
-                        <>
-                          {masterStats.active} active
-                          {masterStats.completed > 0 && ` • ${masterStats.completed} done`}
-                          {masterStats.timeEstimate && ` • ${masterStats.timeEstimate}`}
-                        </>
-                      ) : (
-                        <span className="text-gray-400">
-                          {masterStats.hasFilters ? 'No matches' : 'Empty'}
-                        </span>
-                      )}
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                  </div>
+
+                  {/* Meta Info - Anchored to Master title */}
+                  <AnimatePresence>
+                    {currentView === 'master' && (
+                      <motion.div
+                        initial={{ opacity: 0, x: 20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: 20 }}
+                        transition={SPRING_TRANSITION}
+                        className="text-xs text-gray-500 whitespace-nowrap absolute top-full mt-0.5 pl-0.5 left-0" // Absolute positioning to not affect height
+                      >
+                        {masterStats.total > 0 ? (
+                          <>
+                            {masterStats.active} active
+                            {masterStats.completed > 0 && ` • ${masterStats.completed} done`}
+                            {masterStats.timeEstimate && ` • ${masterStats.timeEstimate}`}
+                          </>
+                        ) : (
+                          <span className="text-gray-400">
+                            {masterStats.hasFilters ? 'No matches' : 'Empty'}
+                          </span>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
               </div>
             </div>
             <div className="flex items-center gap-4 text-gray-500 flex-shrink-0">
-              {/* View indicator dots - moved to right */}
-              <div className="flex items-center gap-1.5">
-                <div className={`h-1.5 rounded-full transition-all ${currentView === 'today' ? 'bg-gray-900 w-6' : 'bg-gray-300 w-1.5'}`} />
-                <div className={`h-1.5 rounded-full transition-all ${currentView === 'master' ? 'bg-gray-900 w-6' : 'bg-gray-300 w-1.5'}`} />
-              </div>
               <button className="hover:text-gray-900 transition-colors">
                 <Search className="w-6 h-6" />
               </button>
@@ -539,7 +622,7 @@ const App: React.FC = () => {
           </header>
 
           {/* Filter Bar - persistent across views */}
-          <div className="relative z-10">
+          <div className="relative z-10 mt-2"> {/* Added top margin to restore spacing */}
             <FilterBar 
               activeFilters={filters} 
               setFilters={setFilters} 
@@ -551,28 +634,29 @@ const App: React.FC = () => {
       </div>
       
       {/* Spacer for fixed header */}
-      <div className="h-[160px]"></div>
+      <div className="h-[100px]"></div>
 
       {/* Task List Carousel */}
-      <div className="flex-1 relative overflow-hidden min-h-0">
+      <div 
+        className="flex-1 relative overflow-hidden min-h-0"
+        style={{
+          maskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent)',
+          WebkitMaskImage: 'linear-gradient(to right, transparent, black 12px, black calc(100% - 12px), transparent)'
+        }}
+      >
         <motion.div
           className="flex h-full"
           animate={{
             x: currentView === 'today' ? 0 : '-50%',
           }}
-          transition={{
-            type: "spring",
-            stiffness: 300,
-            damping: 30,
-            mass: 0.8,
-          }}
+          transition={SPRING_TRANSITION}
           style={{
             width: '200%',
             height: '100%',
           }}
         >
           {/* Today View */}
-          <main className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '50%' }}>
+          <main ref={todayScrollRef} className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '50%' }}>
             <div className="space-y-1 min-w-0">
               {todayTasks.length > 0 ? (
                 todayTasks.map(task => (
@@ -598,7 +682,7 @@ const App: React.FC = () => {
           </main>
 
           {/* Master View */}
-          <main className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '50%' }}>
+          <main ref={masterScrollRef} className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '50%' }}>
             <div className="space-y-1 min-w-0">
               {filteredTasks.length > 0 ? (
                 filteredTasks.map(task => (

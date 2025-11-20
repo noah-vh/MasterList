@@ -728,8 +728,8 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
         }}
       />
       
-      <div className="relative p-4 pb-6 pt-12 pointer-events-auto">
-        <div className="max-w-2xl mx-auto relative">
+      <div className="relative pb-6 pt-12 pointer-events-auto">
+        <div className="max-w-2xl mx-auto relative px-3">
         
         {/* AI Confirmation Card */}
         {aiResponse && (
