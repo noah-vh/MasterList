@@ -361,13 +361,27 @@ export const parseUserIntent = action({
       if (!response.ok) {
         const errorText = await response.text();
         let errorMessage = `OpenRouter API error (${response.status})`;
+        let errorDetails = "";
         try {
           const errorJson = JSON.parse(errorText);
           errorMessage = errorJson.error?.message || errorMessage;
+          errorDetails = errorJson.error?.code || "";
         } catch {
           errorMessage = errorText || errorMessage;
         }
         console.error("OpenRouter API error:", response.status, errorText);
+        
+        // Provide helpful error messages for common issues
+        if (response.status === 401 || errorMessage.toLowerCase().includes("user not found")) {
+          errorMessage = "OpenRouter API authentication failed. Please check:\n" +
+            "1. Your API key is valid (visit https://openrouter.ai/keys)\n" +
+            "2. Your account has credits (visit https://openrouter.ai/credits)\n" +
+            "3. The key is set correctly: `npx convex env set OPENROUTER_API_KEY your-key`\n" +
+            "4. Restart Convex dev server after updating the key";
+        } else if (response.status === 402 || errorMessage.toLowerCase().includes("insufficient")) {
+          errorMessage = "OpenRouter account has insufficient credits. Please add credits at https://openrouter.ai/credits";
+        }
+        
         // Return error info so frontend can display it
         return {
           error: errorMessage,
