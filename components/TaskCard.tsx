@@ -61,7 +61,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
       transition-all duration-200 hover:shadow-md hover:border-gray-200 cursor-pointer
       ${task.isCompleted ? 'opacity-60 grayscale-[0.5]' : ''}
     `}>
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 min-w-0">
         {/* Checkbox */}
         <button
           onClick={(e) => {
@@ -89,11 +89,11 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
           </div>
 
           {/* Bottom: Category Pill + Subtags + Metadata */}
-          <div className="flex items-center justify-between text-xs text-gray-500 mt-1">
+          <div className="flex items-start gap-3 text-xs text-gray-500 mt-1 min-w-0">
             {/* Left: Category + Subtags */}
-            <div className="flex items-center gap-2 flex-wrap">
+            <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
               {mainCategory && categoryMeta && (
-                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide ${categoryMeta.color}`}>
+                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide ${categoryMeta.color} shrink-0`}>
                   {mainCategory}
                 </span>
               )}
@@ -101,7 +101,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
               {subTags.map((tag, i) => {
                 const meta = getTagMetadata(tag);
                 return (
-                  <span key={tag} className={`px-2 py-0.5 rounded text-[10px] font-medium ${meta.color}`}>
+                  <span key={tag} className={`px-2 py-0.5 rounded text-[10px] font-medium ${meta.color} shrink-0`}>
                     {tag}
                   </span>
                 );
@@ -109,7 +109,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
             </div>
 
             {/* Right: Metadata Icons */}
-            <div className="flex items-center gap-3 shrink-0 ml-2">
+            <div className="flex items-center gap-3 shrink-0">
               {task.timeEstimate && (
                 <div className="flex items-center gap-1" title="Time Estimate">
                   <Clock className="w-3 h-3 text-gray-400" />

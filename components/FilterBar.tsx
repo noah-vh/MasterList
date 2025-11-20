@@ -172,19 +172,19 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
   `;
 
   return (
-    <div className="sticky top-0 z-20 bg-[#F3F4F6]/95 backdrop-blur-sm pt-2 pb-20 px-6 border-b border-gray-200/50" ref={menuRef}>
+    <div className="bg-[#F3F4F6]/95 backdrop-blur-sm pt-2 pb-4 px-6 border-b border-gray-200/50 overflow-x-hidden" ref={menuRef}>
       <div className="flex flex-col gap-3">
         
         {/* AI View Active State */}
         {currentViewName ? (
           <div className="flex items-center gap-2 w-full animate-in fade-in zoom-in duration-300">
-            <div className="flex-1 flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-800 rounded-full text-sm font-semibold shadow-sm border border-purple-200">
-              <Sparkles className="w-4 h-4" />
+            <div className="flex-1 flex items-center gap-2 px-4 py-2 bg-purple-100 text-purple-800 rounded-full text-sm font-semibold shadow-sm border border-purple-200 min-w-0">
+              <Sparkles className="w-4 h-4 shrink-0" />
               <span className="truncate">{currentViewName}</span>
             </div>
             <button 
               onClick={clearAll}
-              className="p-2 bg-white text-gray-400 rounded-full hover:bg-gray-50 hover:text-gray-600 transition-colors border border-gray-200 shadow-sm"
+              className="p-2 bg-white text-gray-400 rounded-full hover:bg-gray-50 hover:text-gray-600 transition-colors border border-gray-200 shadow-sm shrink-0"
             >
               <X className="w-4 h-4" />
             </button>
@@ -192,8 +192,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
         ) : (
           <>
             {/* Filter Groups Row */}
-            <div className="flex items-center gap-2 w-full pb-8">
-              <div className="flex items-center gap-2 w-full">
+            <div className="-mx-6">
+              <div className="flex items-center gap-2 overflow-x-auto no-scrollbar px-6 pb-2">
               
               {/* Date/Time Filter */}
               <div className="relative flex-shrink-0">

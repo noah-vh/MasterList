@@ -194,33 +194,41 @@ const App: React.FC = () => {
   };
 
   return (
-    <div className="min-h-screen flex flex-col max-w-2xl mx-auto bg-[#F3F4F6]">
+    <div className="min-h-screen flex flex-col max-w-2xl mx-auto bg-[#F3F4F6] overflow-x-hidden">
       
-      {/* Header */}
-      <header className="flex items-center justify-between p-6 pb-2">
-        <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Master List</h1>
-        <div className="flex items-center gap-4 text-gray-500">
-          <button className="hover:text-gray-900 transition-colors">
-            <Search className="w-6 h-6" />
-          </button>
-          <button className="hover:text-gray-900 transition-colors relative">
-            <Bell className="w-6 h-6" />
-            <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 border-2 border-[#F3F4F6] rounded-full"></span>
-          </button>
-        </div>
-      </header>
+      {/* Fixed Header + Filter Container */}
+      <div className="fixed top-0 left-0 right-0 z-20 bg-[#F3F4F6]">
+        <div className="max-w-2xl mx-auto">
+          {/* Header */}
+          <header className="flex items-center justify-between p-6 pb-2 shrink-0">
+            <h1 className="text-2xl font-bold text-gray-900 tracking-tight">Master List</h1>
+            <div className="flex items-center gap-4 text-gray-500">
+              <button className="hover:text-gray-900 transition-colors">
+                <Search className="w-6 h-6" />
+              </button>
+              <button className="hover:text-gray-900 transition-colors relative">
+                <Bell className="w-6 h-6" />
+                <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 border-2 border-[#F3F4F6] rounded-full"></span>
+              </button>
+            </div>
+          </header>
 
-      {/* Filter Bar */}
-      <FilterBar 
-        activeFilters={filters} 
-        setFilters={setFilters} 
-        currentViewName={currentViewName}
-        onClearView={handleClearView}
-      />
+          {/* Filter Bar */}
+          <FilterBar 
+            activeFilters={filters} 
+            setFilters={setFilters} 
+            currentViewName={currentViewName}
+            onClearView={handleClearView}
+          />
+        </div>
+      </div>
+      
+      {/* Spacer for fixed header */}
+      <div className="h-[140px]"></div>
 
       {/* Task List */}
-      <main className="flex-1 px-4 pt-4 pb-32 overflow-y-auto no-scrollbar">
-        <div className="space-y-1">
+      <main className="flex-1 px-4 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar">
+        <div className="space-y-1 min-w-0">
           {filteredTasks.length > 0 ? (
             filteredTasks.map(task => (
               <TaskCard 
