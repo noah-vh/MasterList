@@ -1,9 +1,12 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { createPortal } from 'react-dom';
-import { FilterState, DateScope, TaskStatus } from '../types';
-import { X, Sparkles, Plus, Calendar, Check, ChevronDown, Search } from 'lucide-react';
+import { FilterState, DateScope, TaskStatus, TimeBlockTemplate } from '../types';
+import { X, Sparkles, Calendar, Check, ChevronDown, Plus, Search } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { DEFAULT_FILTER_GROUPS, FilterGroup, TAG_CATEGORIES, getTagMetadata, getAllTags } from '../constants';
+import { DEFAULT_FILTER_GROUPS, TAG_CATEGORIES, getTagMetadata, getAllTags, FilterGroup } from '../constants';
+import { useMutation } from 'convex/react';
+import { api } from '../convex/_generated/api';
+import { Id } from '../convex/_generated/dataModel';
 // import { FilterGroupCreator } from './FilterGroupCreator'; // Removed as inline creation is used
 
 interface FilterBarProps {
@@ -11,84 +14,61 @@ interface FilterBarProps {
   setFilters: React.Dispatch<React.SetStateAction<FilterState>>;
   currentViewName?: string;
   onClearView: () => void;
+  currentView?: 'today' | 'master' | 'routines' | 'timeline' | 'library';
+  showRoutinesFilter?: boolean;
+  onToggleRoutinesFilter?: (show: boolean) => void;
+  templates?: TimeBlockTemplate[];
+  selectedTemplateId?: string | null;
+  onSelectTemplate?: (templateId: string | null) => void;
+  visibleCategories?: string[];
+  onToggleCategory?: (category: string, visible: boolean) => void;
 }
 
-export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters, currentViewName, onClearView }) => {
-  const [openMenu, setOpenMenu] = useState<'date' | string | null>(null);
-  const [filterGroups, setFilterGroups] = useState<FilterGroup[]>(DEFAULT_FILTER_GROUPS);
-  const [selectedTagsByCategory, setSelectedTagsByCategory] = useState<Record<string, string[]>>({});
+export const FilterBar: React.FC<FilterBarProps> = ({ 
+  activeFilters, 
+  setFilters, 
+  currentViewName, 
+  onClearView,
+  currentView = 'master',
+  showRoutinesFilter = false,
+  onToggleRoutinesFilter,
+  templates = [],
+  selectedTemplateId,
+  onSelectTemplate,
+  visibleCategories = [],
+  onToggleCategory,
+}) => {
+  const createTemplate = useMutation(api.timeBlocks.createTemplate);
+  const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
+  const [newTemplateName, setNewTemplateName] = useState('');
+  const templateInputRef = useRef<HTMLInputElement>(null);
   
-  // Inline Group Creation State
+  // Focus input when creating template
+  useEffect(() => {
+    if (isCreatingTemplate && templateInputRef.current) {
+      templateInputRef.current.focus();
+    }
+  }, [isCreatingTemplate]);
+  
+  const menuRef = useRef<HTMLDivElement>(null);
+  const [openMenu, setOpenMenu] = useState<'date' | string | null>(null);
+  const [filterGroups, setFilterGroups] = useState(DEFAULT_FILTER_GROUPS);
+  const [selectedTagsByCategory, setSelectedTagsByCategory] = useState<Record<string, string[]>>({});
+  const dateButtonRef = useRef<HTMLButtonElement>(null);
+  const groupButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
+  
+  // Inline Group Creation State (for Library view)
   const [isCreatingGroup, setIsCreatingGroup] = useState(false);
   const [newGroupName, setNewGroupName] = useState('');
   const [newGroupTags, setNewGroupTags] = useState<string[]>([]);
   const [tagSearch, setTagSearch] = useState('');
-  
-  const menuRef = useRef<HTMLDivElement>(null);
-  const createInputRef = useRef<HTMLInputElement>(null);
-  
-  // Refs for dropdown positioning
-  const dateButtonRef = useRef<HTMLButtonElement>(null);
-  const groupButtonRefs = useRef<Record<string, HTMLButtonElement | null>>({});
   const addGroupButtonRef = useRef<HTMLDivElement>(null);
-  
-  // State to force re-render on scroll/resize for portal positioning
-  const [, forceUpdate] = useState(0);
-  
-  // Update dropdown positions on scroll/resize
-  useEffect(() => {
-    if (!openMenu && !isCreatingGroup) return;
-    
-    const updatePositions = () => {
-      forceUpdate(prev => prev + 1);
-    };
-    
-    window.addEventListener('scroll', updatePositions, true);
-    window.addEventListener('resize', updatePositions);
-    
-    return () => {
-      window.removeEventListener('scroll', updatePositions, true);
-      window.removeEventListener('resize', updatePositions);
-    };
-  }, [openMenu, isCreatingGroup]);
+  const createInputRef = useRef<HTMLInputElement>(null);
 
-  // Close menu when clicking outside
-  useEffect(() => {
-    if (!openMenu && !isCreatingGroup) return;
-    
-    const handleClickOutside = (event: MouseEvent) => {
-      const target = event.target as HTMLElement;
-      
-      // Don't close if clicking inside the menu container
-      if (menuRef.current && menuRef.current.contains(target as Node)) {
-        return;
-      }
-      
-      // Check if clicking inside any dropdown menu
-      const dropdown = target.closest('[data-dropdown-menu]');
-      if (dropdown) {
-        return;
-      }
-      
-      // Close menu if clicking outside
-      setOpenMenu(null);
-      if (isCreatingGroup) {
-        setIsCreatingGroup(false);
-        setNewGroupName('');
-        setNewGroupTags([]);
-        setTagSearch('');
-      }
-    };
-    
-    const timeoutId = setTimeout(() => {
-      document.addEventListener('click', handleClickOutside, true);
-    }, 0);
-    
-    return () => {
-      clearTimeout(timeoutId);
-      document.removeEventListener('click', handleClickOutside, true);
-    };
-  }, [openMenu, isCreatingGroup]);
+  const handleDateSelect = (value: DateScope) => {
+    setFilters(prev => ({ ...prev, dateScope: value }));
+    setOpenMenu(null);
+  };
 
   const toggleMenu = (menu: 'date' | string, e?: React.MouseEvent) => {
     if (e) {
@@ -96,11 +76,6 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
       e.preventDefault();
     }
     setOpenMenu(prev => prev === menu ? null : menu);
-  };
-
-  const handleDateSelect = (value: DateScope) => {
-    setFilters(prev => ({ ...prev, dateScope: value }));
-    setOpenMenu(null);
   };
 
   const handleCategoryTagToggle = (category: string, tag: string) => {
@@ -145,7 +120,6 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
         id: `custom-${Date.now()}`,
         name: newGroupName.trim(),
         tags: newGroupTags.length > 0 ? newGroupTags : undefined,
-        category: newGroupTags.length === 0 ? 'domains' : undefined,
         color: 'bg-gray-100 text-gray-700 border-gray-200',
       };
       setFilterGroups(prev => [...prev, newGroup]);
@@ -156,12 +130,123 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
     }
   };
 
+  // Focus input when creating group
+  useEffect(() => {
+    if (isCreatingGroup && createInputRef.current) {
+      createInputRef.current.focus();
+    }
+  }, [isCreatingGroup]);
+
+  // Helper to get dropdown position
+  const getDropdownPosition = (buttonRef: React.RefObject<HTMLElement>) => {
+    if (!buttonRef.current) return { top: 0, left: 0 };
+    const rect = buttonRef.current.getBoundingClientRect();
+    return {
+      top: rect.bottom + 8,
+      left: rect.left,
+      width: rect.width,
+    };
+  };
+
+  // Render dropdown portal
+  const renderDropdownPortal = (content: React.ReactNode, buttonRef: React.RefObject<HTMLElement>, isOpen: boolean) => {
+    if (!isOpen || typeof window === 'undefined') return null;
+    if (!buttonRef.current) return null;
+    
+    const position = getDropdownPosition(buttonRef);
+    
+    return createPortal(
+      <div
+        data-dropdown-menu
+        style={{
+          position: 'fixed',
+          top: `${position.top}px`,
+          left: `${position.left}px`,
+          zIndex: 1000,
+        }}
+      >
+        {content}
+      </div>,
+      document.body
+    );
+  };
+
+  // Close menu when clicking outside
+  useEffect(() => {
+    if (!openMenu) return;
+    
+    const handleClickOutside = (event: MouseEvent) => {
+      const target = event.target as HTMLElement;
+      
+      if (menuRef.current && menuRef.current.contains(target as Node)) {
+        return;
+      }
+      
+      const dropdown = target.closest('[data-dropdown-menu]');
+      if (dropdown) {
+        return;
+      }
+      
+      setOpenMenu(null);
+    };
+    
+    const timeoutId = setTimeout(() => {
+      document.addEventListener('click', handleClickOutside, true);
+    }, 0);
+    
+    return () => {
+      clearTimeout(timeoutId);
+      document.removeEventListener('click', handleClickOutside, true);
+    };
+  }, [openMenu]);
+
+  // Sync selectedTagsByCategory with activeFilters.tags
+  useEffect(() => {
+    // Rebuild selectedTagsByCategory from activeFilters.tags
+    const newSelected: Record<string, string[]> = {};
+    if (activeFilters.tags) {
+      activeFilters.tags.forEach(tag => {
+        // Find which filter group this tag belongs to
+        const metadata = getTagMetadata(tag);
+        const category = metadata.category;
+        
+        // Find the filter group that matches this category
+        const matchingGroup = filterGroups.find(g => 
+          g.category === category || (g.tags && g.tags.includes(tag))
+        );
+        
+        if (matchingGroup) {
+          if (!newSelected[matchingGroup.id]) {
+            newSelected[matchingGroup.id] = [];
+          }
+          newSelected[matchingGroup.id].push(tag);
+        }
+      });
+    }
+    setSelectedTagsByCategory(newSelected);
+  }, [activeFilters.tags, filterGroups]);
+
   const clearAll = () => {
     if (currentViewName) {
       onClearView();
     } else {
       setSelectedTagsByCategory({});
       setFilters({ tags: [], status: [], dateScope: 'All' });
+    }
+  };
+
+  const handleCreateTemplate = async () => {
+    if (newTemplateName.trim()) {
+      try {
+        const templateId = await createTemplate({ name: newTemplateName.trim() });
+        if (onSelectTemplate) {
+          onSelectTemplate(templateId);
+        }
+        setIsCreatingTemplate(false);
+        setNewTemplateName('');
+      } catch (error) {
+        console.error('Error creating template:', error);
+      }
     }
   };
 
@@ -180,49 +265,94 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
     isDateActive = true;
   }
 
-  const getPillClasses = (isOpen: boolean, isActive: boolean) => `
-    flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap
-    ${isOpen 
-      ? 'bg-gray-900 text-white border-gray-900' 
-      : isActive 
-        ? 'bg-blue-50 text-blue-700 border-blue-200'
-        : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
-    }
-  `;
 
-  // Helper to get dropdown position
-  const getDropdownPosition = (buttonRef: React.RefObject<HTMLElement>) => {
-    if (!buttonRef.current) return { top: 0, left: 0 };
-    const rect = buttonRef.current.getBoundingClientRect();
-    return {
-      top: rect.bottom + 8,
-      left: rect.left,
-      width: rect.width,
-    };
-  };
-
-  // Render dropdown portal
-  const renderDropdownPortal = (content: React.ReactNode, buttonRef: React.RefObject<HTMLElement> | { current: HTMLElement | null }, isOpen: boolean) => {
-    if (!isOpen || typeof window === 'undefined') return null;
-    if (!buttonRef.current) return null;
-    
-    const position = getDropdownPosition(buttonRef as React.RefObject<HTMLElement>);
-    
-    return createPortal(
-      <div
-        data-dropdown-menu
-        style={{
-          position: 'fixed',
-          top: `${position.top}px`,
-          left: `${position.left}px`,
-          zIndex: 1000,
-        }}
-      >
-        {content}
-      </div>,
-      document.body
+  // Show template selector when on timeline view
+  if (currentView === 'timeline') {
+    return (
+      <div className="pt-2 pb-2 px-4" ref={menuRef}>
+        <div className="flex items-center gap-2 overflow-x-auto no-scrollbar">
+          {templates.map((template) => (
+            <button
+              key={template.id}
+              onClick={() => onSelectTemplate?.(template.id)}
+              className={`
+                flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0
+                ${selectedTemplateId === template.id
+                  ? 'bg-blue-50 text-blue-700 border-blue-200 ring-2 ring-offset-1 ring-blue-300'
+                  : 'bg-white/60 text-gray-700 border-white/40 hover:border-white/60 hover:bg-white/80 backdrop-blur-sm'
+                }
+              `}
+            >
+              <span>{template.name}</span>
+              {template.isDefault && (
+                <span className="px-1.5 py-0.5 bg-blue-100 text-blue-600 rounded text-xs font-semibold">
+                  Default
+                </span>
+              )}
+            </button>
+          ))}
+          
+          {isCreatingTemplate ? (
+            <div className="relative flex-shrink-0">
+              <div className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap bg-white/80 backdrop-blur-md border-white/50 ring-2 ring-blue-100">
+                <input
+                  ref={templateInputRef}
+                  type="text"
+                  value={newTemplateName}
+                  onChange={(e) => setNewTemplateName(e.target.value)}
+                  placeholder="Template name..."
+                  className="bg-transparent outline-none border-none p-0 text-gray-900 placeholder-gray-400 min-w-[120px]"
+                  autoFocus
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') handleCreateTemplate();
+                    if (e.key === 'Escape') {
+                      setIsCreatingTemplate(false);
+                      setNewTemplateName('');
+                    }
+                  }}
+                  onClick={(e) => e.stopPropagation()}
+                />
+                <div className="flex items-center gap-1 border-l border-gray-200 pl-2 ml-1">
+                  <button 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      handleCreateTemplate(); 
+                    }}
+                    disabled={!newTemplateName.trim()}
+                    className="p-1 hover:bg-gray-100 rounded-full text-blue-600 disabled:text-gray-300 transition-colors"
+                  >
+                    <Check className="w-3.5 h-3.5" />
+                  </button>
+                  <button 
+                    onClick={(e) => { 
+                      e.stopPropagation(); 
+                      setIsCreatingTemplate(false);
+                      setNewTemplateName('');
+                    }}
+                    className="p-1 hover:bg-gray-100 rounded-full text-gray-400 hover:text-gray-600 transition-colors"
+                  >
+                    <X className="w-3.5 h-3.5" />
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <button
+              onClick={() => {
+                setIsCreatingTemplate(true);
+                setTimeout(() => templateInputRef.current?.focus(), 0);
+              }}
+              className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border border-white/40 shadow-sm transition-all whitespace-nowrap flex-shrink-0 bg-white/60 backdrop-blur-sm text-gray-700 hover:border-white/60 hover:bg-white/80"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              <span>New Template</span>
+            </button>
+          )}
+        </div>
+      </div>
     );
-  };
+  }
+
 
   return (
     <div className="pt-2 pb-1 px-4" ref={menuRef}>
@@ -244,7 +374,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
           </div>
         ) : (
           <>
-            {/* Filter Groups Row */}
+            {/* View Toggles Row - Simple on/off toggles */}
             <div className="-mx-4">
               <div 
                 className="flex items-center gap-2 overflow-x-auto no-scrollbar px-4 pb-2"
@@ -254,7 +384,23 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                 }}
               >
               
-              {/* Date/Time Filter */}
+              {/* Routines Filter Toggle (Master view only) */}
+              {currentView === 'master' && onToggleRoutinesFilter && (
+                <button
+                  type="button"
+                  onClick={() => onToggleRoutinesFilter(!showRoutinesFilter)}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 ${
+                    showRoutinesFilter
+                      ? 'bg-gray-900 text-white border-gray-900'
+                      : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
+                  }`}
+                >
+                  <span>Routines</span>
+                  {showRoutinesFilter && <Check className="w-3.5 h-3.5" />}
+                </button>
+              )}
+
+              {/* Date/Time Filter - Dropdown */}
               <div className="relative flex-shrink-0">
                 <button
                   ref={dateButtonRef}
@@ -262,13 +408,19 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                   onClick={(e) => {
                     e.preventDefault();
                     e.stopPropagation();
-                    toggleMenu('date', e);
+                    toggleMenu('date');
                   }}
-                  className={`${getPillClasses(openMenu === 'date', isDateActive)} z-10 relative`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 ${
+                    openMenu === 'date'
+                      ? 'bg-gray-900 text-white border-gray-900'
+                      : isDateActive
+                        ? 'bg-gray-900 text-white border-gray-900'
+                        : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
+                  }`}
                 >
                   <Calendar className={`w-3.5 h-3.5 ${!isDateActive && openMenu !== 'date' ? 'text-gray-400' : ''}`} />
                   <span>{currentDateValue}</span>
-                  <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${openMenu === 'date' ? '' : 'rotate-180'}`} />
+                  <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${openMenu === 'date' ? 'rotate-180' : ''}`} />
                 </button>
 
                 {renderDropdownPortal(
@@ -279,7 +431,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                         animate={{ opacity: 1, y: 0, scale: 1 }}
                         exit={{ opacity: 0, y: -10, scale: 0.95 }}
                         transition={{ duration: 0.2, ease: "easeOut" }}
-                        className="w-48 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden origin-top-left"
+                        className="w-48 bg-white/80 backdrop-blur-xl rounded-xl shadow-xl border border-white/40 overflow-hidden origin-top-left"
                         onClick={(e) => e.stopPropagation()}
                       >
                         <div className="p-1">
@@ -333,8 +485,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                 )}
               </div>
 
-              {/* Filter Group Pills */}
-              {filterGroups.map(group => {
+              {/* Filter Group Pills - Show on all views except Library */}
+              {currentView !== 'library' && filterGroups.map(group => {
                 const isOpen = openMenu === group.id;
                 const selectedTags = selectedTagsByCategory[group.id] || [];
                 const isActive = selectedTags.length > 0;
@@ -360,8 +512,8 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                         ${isOpen 
                           ? 'bg-gray-900 text-white border-gray-900' 
                           : isActive 
-                            ? `${groupColor} ring-2 ring-offset-1 ring-gray-300` 
-                            : 'bg-white text-gray-700 border-gray-200 hover:border-gray-300'
+                            ? 'bg-gray-900 text-white border-gray-900'
+                            : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
                         }
                       `}
                     >
@@ -371,7 +523,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                           {selectedTags.length}
                         </span>
                       )}
-                      <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${isOpen ? '' : 'rotate-180'}`} />
+                      <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${isOpen ? 'rotate-180' : ''}`} />
                     </button>
 
                     {(() => {
@@ -384,7 +536,7 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                               animate={{ opacity: 1, y: 0, scale: 1 }}
                               exit={{ opacity: 0, y: -10, scale: 0.95 }}
                               transition={{ duration: 0.2, ease: "easeOut" }}
-                              className="w-64 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden origin-top-left"
+                              className="w-64 bg-white/80 backdrop-blur-xl rounded-xl shadow-xl border border-white/40 overflow-hidden origin-top-left"
                               onMouseDown={(e) => {
                                 e.stopPropagation();
                                 e.preventDefault();
@@ -450,108 +602,177 @@ export const FilterBar: React.FC<FilterBarProps> = ({ activeFilters, setFilters,
                 );
               })}
 
-              {/* Add Custom Group Button / Inline Creator */}
-              <div className="relative flex-shrink-0">
-                {!isCreatingGroup ? (
-                  <button
-                    onClick={() => setIsCreatingGroup(true)}
-                    className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border border-gray-200 shadow-sm transition-all whitespace-nowrap flex-shrink-0 bg-white text-gray-700 hover:border-gray-300 hover:bg-gray-50"
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    <span>Add Group</span>
-                  </button>
-                ) : (
-                  <div ref={addGroupButtonRef} className="relative z-50">
-                    <div className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap bg-white border-gray-300 ring-2 ring-blue-100">
-                      <input
-                        ref={createInputRef}
-                        type="text"
-                        value={newGroupName}
-                        onChange={(e) => setNewGroupName(e.target.value)}
-                        placeholder="Group Name..."
-                        className="bg-transparent outline-none border-none p-0 text-gray-900 placeholder-gray-400 min-w-[100px]"
-                        autoFocus
-                        onKeyDown={(e) => {
-                          if (e.key === 'Enter') handleSaveNewGroup();
-                          if (e.key === 'Escape') setIsCreatingGroup(false);
+              {/* Category View Toggles - Only show on Library view */}
+              {currentView === 'library' && (
+                <>
+                  {Object.keys(TAG_CATEGORIES).map(category => {
+                    const isVisible = visibleCategories.includes(category);
+                    
+                    return (
+                      <button
+                        key={category}
+                        type="button"
+                        onClick={() => {
+                          if (onToggleCategory) {
+                            onToggleCategory(category, !isVisible);
+                          }
                         }}
-                        onClick={(e) => e.stopPropagation()}
-                      />
-                      <div className="flex items-center gap-1 border-l border-gray-200 pl-2 ml-1">
-                        <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded text-gray-600 font-medium">
-                          {newGroupTags.length}
-                        </span>
-                        <button 
-                          onClick={(e) => { e.stopPropagation(); handleSaveNewGroup(); }}
-                          disabled={!newGroupName.trim()}
-                          className="p-1 hover:bg-gray-100 rounded-full text-blue-600 disabled:text-gray-300 transition-colors"
-                        >
-                          <Check className="w-3.5 h-3.5" />
-                        </button>
-                      </div>
-                    </div>
-
-                    {renderDropdownPortal(
-                      <motion.div 
-                        initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        className="w-64 bg-white rounded-xl shadow-xl border border-gray-100 overflow-hidden origin-top-left"
-                        onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
-                        onClick={(e) => e.stopPropagation()}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 ${
+                          isVisible
+                            ? 'bg-gray-900 text-white border-gray-900'
+                            : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
+                        }`}
                       >
-                        <div className="p-2 border-b border-gray-100">
-                          <div className="relative">
-                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
-                            <input 
-                              type="text"
-                              value={tagSearch}
-                              onChange={(e) => setTagSearch(e.target.value)}
-                              placeholder="Search tags..."
-                              className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all"
-                              onClick={(e) => e.stopPropagation()}
-                            />
+                        <span className="capitalize">{category}</span>
+                        {isVisible && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                    );
+                  })}
+
+                  {/* Custom Filter Groups (for Library) */}
+                  {filterGroups.filter(g => !g.category).map(group => {
+                    const isVisible = visibleCategories.includes(group.id);
+                    
+                    return (
+                      <button
+                        key={group.id}
+                        type="button"
+                        onClick={() => {
+                          if (onToggleCategory) {
+                            onToggleCategory(group.id, !isVisible);
+                          }
+                        }}
+                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 ${
+                          isVisible
+                            ? 'bg-gray-900 text-white border-gray-900'
+                            : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
+                        }`}
+                      >
+                        <span>{group.name}</span>
+                        {isVisible && <Check className="w-3.5 h-3.5" />}
+                      </button>
+                    );
+                  })}
+
+                  {/* Add New Group Button - Inline */}
+                  {!isCreatingGroup ? (
+                    <button
+                      onClick={() => setIsCreatingGroup(true)}
+                      className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border border-white/40 shadow-sm transition-all whitespace-nowrap flex-shrink-0 bg-white/60 backdrop-blur-sm text-gray-700 hover:border-white/60 hover:bg-white/80"
+                    >
+                      <Plus className="w-3.5 h-3.5" />
+                      <span>Add</span>
+                    </button>
+                  ) : (
+                    <div ref={addGroupButtonRef} className="relative z-50">
+                      <div className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap bg-white/80 backdrop-blur-md border-white/50 ring-2 ring-blue-100">
+                        <input
+                          ref={createInputRef}
+                          type="text"
+                          value={newGroupName}
+                          onChange={(e) => setNewGroupName(e.target.value)}
+                          placeholder="Group Name..."
+                          className="bg-transparent outline-none border-none p-0 text-gray-900 placeholder-gray-400 min-w-[100px]"
+                          autoFocus
+                          onKeyDown={(e) => {
+                            if (e.key === 'Enter') handleSaveNewGroup();
+                            if (e.key === 'Escape') {
+                              setIsCreatingGroup(false);
+                              setNewGroupName('');
+                              setNewGroupTags([]);
+                              setTagSearch('');
+                            }
+                          }}
+                          onClick={(e) => e.stopPropagation()}
+                        />
+                        <div className="flex items-center gap-1 border-l border-gray-200 pl-2 ml-1">
+                          <span className="text-xs bg-gray-100 px-1.5 py-0.5 rounded text-gray-600 font-medium">
+                            {newGroupTags.length}
+                          </span>
+                          <button 
+                            onClick={(e) => { e.stopPropagation(); handleSaveNewGroup(); }}
+                            disabled={!newGroupName.trim()}
+                            className="p-1 hover:bg-gray-100 rounded-full text-blue-600 disabled:text-gray-300 transition-colors"
+                          >
+                            <Check className="w-3.5 h-3.5" />
+                          </button>
+                          <button 
+                            onClick={(e) => { 
+                              e.stopPropagation(); 
+                              setIsCreatingGroup(false);
+                              setNewGroupName('');
+                              setNewGroupTags([]);
+                              setTagSearch('');
+                            }}
+                            className="p-1 hover:bg-gray-100 rounded-full text-gray-400 transition-colors"
+                          >
+                            <X className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+
+                      {renderDropdownPortal(
+                        <motion.div 
+                          initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          className="w-64 bg-white/80 backdrop-blur-xl rounded-xl shadow-xl border border-white/40 overflow-hidden origin-top-left"
+                          onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); }}
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="p-2 border-b border-gray-100">
+                            <div className="relative">
+                              <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-gray-400" />
+                              <input 
+                                type="text"
+                                value={tagSearch}
+                                onChange={(e) => setTagSearch(e.target.value)}
+                                placeholder="Search tags..."
+                                className="w-full pl-8 pr-3 py-1.5 text-sm bg-gray-50 border border-gray-200 rounded-lg focus:outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all"
+                                onClick={(e) => e.stopPropagation()}
+                              />
+                            </div>
                           </div>
-                        </div>
-                        <div className="p-1 max-h-64 overflow-y-auto custom-scrollbar">
-                          {getAllTags().filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).map(tag => {
-                            const isSelected = newGroupTags.includes(tag);
-                            const meta = getTagMetadata(tag);
-                            return (
-                              <button
-                                key={tag}
-                                onClick={(e) => {
-                                  e.stopPropagation();
-                                  setNewGroupTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
-                                }}
-                                className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
-                              >
-                                <div className="flex items-center gap-2">
-                                  <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-blue-600' : 'bg-gray-300'}`} />
-                                  <span className={isSelected ? meta.color.split(' ')[1] || 'text-gray-900' : 'text-gray-700'}>
-                                    {meta.label}
-                                  </span>
-                                </div>
-                                {isSelected && <Check className="w-3.5 h-3.5 text-blue-600" />}
-                              </button>
-                            );
-                          })}
-                          {getAllTags().filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).length === 0 && (
-                            <div className="text-center py-4 text-gray-400 text-xs">No matching tags</div>
-                          )}
-                        </div>
-                      </motion.div>,
-                      addGroupButtonRef,
-                      isCreatingGroup
-                    )}
-                  </div>
-                )}
-              </div>
+                          <div className="p-1 max-h-64 overflow-y-auto custom-scrollbar">
+                            {getAllTags().filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).map(tag => {
+                              const isSelected = newGroupTags.includes(tag);
+                              const meta = getTagMetadata(tag);
+                              return (
+                                <button
+                                  key={tag}
+                                  onClick={(e) => {
+                                    e.stopPropagation();
+                                    setNewGroupTags(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
+                                  }}
+                                  className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-700 hover:bg-gray-50 flex items-center justify-between transition-colors"
+                                >
+                                  <div className="flex items-center gap-2">
+                                    <div className={`w-2 h-2 rounded-full ${isSelected ? 'bg-blue-600' : 'bg-gray-300'}`} />
+                                    <span className={isSelected ? meta.color.split(' ')[1] || 'text-gray-900' : 'text-gray-700'}>
+                                      {meta.label}
+                                    </span>
+                                  </div>
+                                  {isSelected && <Check className="w-3.5 h-3.5 text-blue-600" />}
+                                </button>
+                              );
+                            })}
+                            {getAllTags().filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).length === 0 && (
+                              <div className="text-center py-4 text-gray-400 text-xs">No matching tags</div>
+                            )}
+                          </div>
+                        </motion.div>,
+                        addGroupButtonRef,
+                        isCreatingGroup
+                      )}
+                    </div>
+                  )}
+                </>
+              )}
 
               {/* Clear All Button */}
               {(Object.keys(selectedTagsByCategory).length > 0 || isDateActive) && (
                 <button
                   onClick={clearAll}
-                  className="px-4 py-2 rounded-full text-sm font-medium bg-white text-gray-600 border border-gray-200 hover:bg-gray-50 transition-colors flex-shrink-0"
+                  className="px-4 py-2 rounded-full text-sm font-medium bg-white/60 backdrop-blur-sm text-gray-600 border border-white/40 hover:bg-white/80 transition-colors flex-shrink-0"
                 >
                   Clear
                 </button>

@@ -1,20 +1,51 @@
 import React, { useMemo, useState, useRef } from 'react';
-import { Task, TaskStatus } from '../types';
-import { getTagMetadata, TAG_CATEGORIES } from '../constants';
-import { CheckCircle2, Circle, Clock, Calendar, User, Check, X } from 'lucide-react';
+import { RoutineTask, TaskStatus, RoutineFrequency } from '../types';
+import { getTagMetadata, TAG_CATEGORIES, ROUTINE_BADGE_COLOR, DAYS_OF_WEEK } from '../constants';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { CheckmarkCircle01Icon, CircleIcon, Clock01Icon, Calendar01Icon, UserIcon, CheckmarkCircle01Icon as CheckmarkIcon, Cancel01Icon, FireIcon } from '@hugeicons/core-free-icons';
 import { Badge } from './Badge';
 import { useMutation } from 'convex/react';
 import { api } from '../convex/_generated/api';
 import { Id } from '../convex/_generated/dataModel';
 
 interface TaskCardProps {
-  task: Task;
+  task: RoutineTask;
   onToggle: (id: string) => void;
   onClick: (id: string) => void;
 }
 
+// Helper to format routine frequency display
+const formatFrequency = (routine: RoutineTask['routine']): string => {
+  if (!routine) return '';
+  
+  if (routine.frequency === RoutineFrequency.Daily) {
+    return 'Daily';
+  } else if (routine.frequency === RoutineFrequency.Weekly) {
+    if (routine.daysOfWeek && routine.daysOfWeek.length > 0) {
+      const dayLabels = routine.daysOfWeek
+        .sort((a, b) => a - b)
+        .map(day => DAYS_OF_WEEK.find(d => d.value === day)?.label || '')
+        .filter(Boolean);
+      return dayLabels.join('/');
+    }
+    return 'Weekly';
+  } else if (routine.frequency === RoutineFrequency.Monthly) {
+    return 'Monthly';
+  } else if (routine.frequency === RoutineFrequency.Custom) {
+    return `Every ${routine.customInterval} day${routine.customInterval !== 1 ? 's' : ''}`;
+  }
+  return '';
+};
+
+// Helper to check if routine is completed today
+const isCompletedToday = (routine: RoutineTask['routine']): boolean => {
+  if (!routine || !routine.completionHistory) return false;
+  const today = new Date().toISOString().split('T')[0];
+  return routine.completionHistory.includes(today);
+};
+
 // Helper to group tags
-const useGroupedTags = (task: Task) => {
+const useGroupedTags = (task: RoutineTask) => {
   return useMemo(() => {
     const grouped: Record<string, string[]> = {
       headspace: [],
@@ -43,10 +74,61 @@ const statusDotColors: Record<TaskStatus, string> = {
   [TaskStatus.Archived]: 'bg-slate-400',
 };
 
+// Get card accent color based on status and category
+const getCardColor = (status: TaskStatus, categoryMeta: ReturnType<typeof getTagMetadata> | null): string => {
+  // Map status to base colors
+  const statusColors: Record<TaskStatus, string> = {
+    [TaskStatus.Active]: '#3B82F6', // blue-500
+    [TaskStatus.WaitingOn]: '#EAB308', // yellow-500
+    [TaskStatus.SomedayMaybe]: '#9CA3AF', // gray-400
+    [TaskStatus.Archived]: '#94A3B8', // slate-400
+  };
+  
+  // If we have a category, blend it with status color (subtle)
+  if (categoryMeta && categoryMeta.color) {
+    // Extract color from category (e.g., 'bg-blue-100' -> blue)
+    const colorMatch = categoryMeta.color.match(/bg-(\w+)-(\d+)/);
+    if (colorMatch) {
+      const [, colorName] = colorMatch;
+      // Use a subtle version of the category color
+      const categoryColorMap: Record<string, string> = {
+        'indigo': '#818CF8',
+        'pink': '#F9A8D4',
+        'purple': '#C084FC',
+        'emerald': '#6EE7B7',
+        'rose': '#FCA5A5',
+        'amber': '#FCD34D',
+        'blue': '#93C5FD',
+        'green': '#86EFAC',
+        'red': '#F87171',
+        'cyan': '#67E8F9',
+        'yellow': '#FDE047',
+        'teal': '#5EEAD4',
+        'orange': '#FB923C',
+        'gray': '#94A3B8',
+      };
+      return categoryColorMap[colorName] || statusColors[status];
+    }
+  }
+  
+  return statusColors[status];
+};
+
+// Helper to convert hex to rgba with opacity
+const hexToRgba = (hex: string, opacity: number): string => {
+  const r = parseInt(hex.slice(1, 3), 16);
+  const g = parseInt(hex.slice(3, 5), 16);
+  const b = parseInt(hex.slice(5, 7), 16);
+  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+};
+
 export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) => {
   const groupedTags = useGroupedTags(task);
   const mainCategory = groupedTags.domains[0]; // Primary domain
   const categoryMeta = mainCategory ? getTagMetadata(mainCategory) : null;
+  
+  const completeRoutine = useMutation(api.routines.complete);
+  const uncompleteRoutine = useMutation(api.routines.uncomplete);
   
   // Filter out duration if timeEstimate exists, and flatten other tags for the "subtags" line
   const subTags = [
@@ -55,6 +137,19 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
     // Only show duration tag if no specific time estimate
     ...(!task.timeEstimate ? groupedTags.duration : [])
   ];
+
+  const routineCompletedToday = task.isRoutine && task.routine ? isCompletedToday(task.routine) : false;
+  
+  const handleRoutineToggle = async (e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!task.routine) return;
+    
+    if (routineCompletedToday) {
+      await uncompleteRoutine({ routineId: task.routine.id as Id<"routines"> });
+    } else {
+      await completeRoutine({ routineId: task.routine.id as Id<"routines"> });
+    }
+  };
 
   // Swipe gesture state - using refs to avoid stale closures
   const [swipeOffset, setSwipeOffset] = useState(0);
@@ -257,9 +352,9 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
           }}
           >
             {isInTodayList ? (
-              <X className="w-6 h-6 text-red-600" strokeWidth={2.5} />
+              <HugeiconsIcon icon={Cancel01Icon} size={24} className="text-red-600" />
             ) : (
-              <Check className="w-6 h-6 text-green-600" strokeWidth={2.5} />
+              <HugeiconsIcon icon={CheckmarkIcon} size={24} className="text-green-600" />
             )}
           </div>
           <div className="w-[80px] flex items-center justify-center">
@@ -286,17 +381,30 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
         onMouseDown={handleMouseDown}
         onClick={handleClick}
         className={`
-          relative bg-white rounded-2xl p-4 shadow-sm border border-gray-100 
-          transition-all duration-200 hover:shadow-md hover:border-gray-200 cursor-pointer
+          relative rounded-2xl p-4 overflow-hidden group
+          transition-all duration-200 cursor-pointer backdrop-blur-md
           ${task.isCompleted ? 'opacity-60 grayscale-[0.5]' : ''}
           ${isSwiping ? 'transition-transform duration-100 ease-out' : 'transition-all duration-200'}
+          ${isSwiping ? 'shadow-2xl scale-[1.02]' : 'hover:shadow-lg'}
         `}
         style={{
           transform: `translateX(${swipeOffset}px)`,
           zIndex: 10,
+          backgroundColor: task.isCompleted 
+            ? 'rgba(255, 255, 255, 0.4)' 
+            : 'rgba(255, 255, 255, 0.7)',
+          border: `1px solid rgba(255, 255, 255, 0.5)`,
+          boxShadow: isSwiping
+            ? '0 20px 50px -12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.3)'
+            : '0 4px 12px -2px rgba(0, 0, 0, 0.08)',
         }}
       >
-      <div className="flex items-start gap-3 min-w-0">
+        {/* Gradient overlay for depth - similar to time blocks */}
+        <div 
+          className="absolute inset-0 opacity-50 pointer-events-none bg-gradient-to-br from-white/50 to-transparent"
+        />
+        {/* Content */}
+        <div className="relative flex items-start gap-3 min-w-0 z-10">
         {/* Checkbox */}
         <button
           onClick={(e) => {
@@ -306,14 +414,14 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
           className="mt-0.5 text-gray-400 hover:text-blue-600 transition-colors focus:outline-none"
         >
           {task.isCompleted ? (
-            <CheckCircle2 className="w-5 h-5 text-gray-400" />
+            <HugeiconsIcon icon={CheckmarkCircle01Icon} size={20} className="text-gray-400" />
           ) : (
-            <Circle className="w-5 h-5" />
+            <HugeiconsIcon icon={CircleIcon} size={20} />
           )}
         </button>
 
         <div className="flex-1 min-w-0">
-          {/* Top Row: Status Dot + Title */}
+          {/* Top Row: Status Dot + Title + Routine Badge */}
           <div className="flex items-center gap-3 mb-2">
             {!task.isCompleted && (
               <div className={`w-2 h-2 rounded-full ${statusDotColors[task.status]}`} />
@@ -321,14 +429,47 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
             <h3 className={`text-base font-medium text-gray-900 truncate ${task.isCompleted ? 'line-through text-gray-500' : ''}`}>
               {task.title}
             </h3>
+            {task.isRoutine && (
+              <span className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold tracking-wide backdrop-blur-md border border-white/50 ${ROUTINE_BADGE_COLOR} shrink-0 shadow-lg`} style={{
+                backgroundColor: 'rgba(255, 255, 255, 0.6)',
+                boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
+              }}>
+                Routine
+              </span>
+            )}
           </div>
+          
+          {/* Routine Info Row */}
+          {task.isRoutine && task.routine && (
+            <div className="flex items-center gap-3 mb-2 text-xs text-gray-600">
+              <span className="font-medium">{formatFrequency(task.routine)}</span>
+              {task.routine.goal && (
+                <span className="text-gray-500">• {task.routine.goal}</span>
+              )}
+              {task.routine.trackStreaks && task.routine.currentStreak !== undefined && (
+                <div className="flex items-center gap-1 text-purple-600">
+                  <HugeiconsIcon icon={FireIcon} size={12} />
+                  <span>{task.routine.currentStreak} day streak</span>
+                  {task.routine.longestStreak !== undefined && task.routine.longestStreak > task.routine.currentStreak && (
+                    <span className="text-gray-400">(best: {task.routine.longestStreak})</span>
+                  )}
+                </div>
+              )}
+              {routineCompletedToday && (
+                <span className="text-green-600 font-medium">✓ Done today</span>
+              )}
+            </div>
+          )}
 
           {/* Bottom: Category Pill + Subtags + Metadata */}
           <div className="flex items-start gap-3 text-xs text-gray-500 mt-1 min-w-0">
             {/* Left: Category + Subtags */}
             <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
               {mainCategory && categoryMeta && (
-                <span className={`px-2 py-0.5 rounded text-[10px] font-semibold tracking-wide ${categoryMeta.color} shrink-0`}>
+                <span className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold tracking-wide backdrop-blur-md border border-white/50 ${categoryMeta.color} shrink-0 shadow-lg`} style={{
+                  backgroundColor: 'rgba(255, 255, 255, 0.6)',
+                  boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
+                }}>
                   {mainCategory}
                 </span>
               )}
@@ -336,18 +477,27 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
               {subTags.map((tag, i) => {
                 const meta = getTagMetadata(tag);
                 return (
-                  <span key={tag} className={`px-2 py-0.5 rounded text-[10px] font-medium ${meta.color} shrink-0`}>
+                  <span key={tag} className={`px-2.5 py-1 rounded-lg text-[10px] font-medium backdrop-blur-md border border-white/50 ${meta.color} shrink-0 shadow-lg`} style={{
+                    backgroundColor: 'rgba(255, 255, 255, 0.6)',
+                    boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
+                  }}>
                     {tag}
                   </span>
                 );
               })}
             </div>
 
-            {/* Right: Metadata Icons */}
+            {/* Right: Metadata Icons + Routine Complete Button */}
             <div className="flex items-center gap-3 shrink-0">
-              {task.timeEstimate && (
+              {task.isRoutine && task.routine && task.routine.timeEstimate && (
                 <div className="flex items-center gap-1" title="Time Estimate">
-                  <Clock className="w-3 h-3 text-gray-400" />
+                  <HugeiconsIcon icon={Clock01Icon} size={12} className="text-gray-400" />
+                  <span>{task.routine.timeEstimate}</span>
+                </div>
+              )}
+              {!task.isRoutine && task.timeEstimate && (
+                <div className="flex items-center gap-1" title="Time Estimate">
+                  <HugeiconsIcon icon={Clock01Icon} size={12} className="text-gray-400" />
                   <span>{task.timeEstimate}</span>
                 </div>
               )}
@@ -360,20 +510,39 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
                     animation: 'fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
                   }}
                 >
-                  <Calendar className="w-3 h-3 text-gray-400" />
+                  <HugeiconsIcon icon={Calendar01Icon} size={12} className="text-gray-400" />
                   <span>{new Date(task.actionDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
                 </div>
               )}
               {task.participants && task.participants.length > 0 && (
                  <div className="flex items-center gap-1" title="Participants">
-                   <User className="w-3 h-3 text-gray-400" />
+                   <HugeiconsIcon icon={UserIcon} size={12} className="text-gray-400" />
                    <span className="truncate max-w-[100px]">{task.participants.join(', ')}</span>
                  </div>
+              )}
+              {task.isRoutine && task.routine && (
+                <button
+                  onClick={handleRoutineToggle}
+                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all backdrop-blur-md border ${
+                    routineCompletedToday
+                      ? 'text-green-700 border-green-500/40 hover:border-green-500/60'
+                      : 'text-gray-600 border-white/50 hover:border-white/70'
+                  }`}
+                  style={{
+                    backgroundColor: routineCompletedToday 
+                      ? 'rgba(34, 197, 94, 0.15)' 
+                      : 'rgba(255, 255, 255, 0.6)',
+                    boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
+                  }}
+                  title={routineCompletedToday ? 'Mark as not done today' : 'Mark as done today'}
+                >
+                  {routineCompletedToday ? 'Done' : 'Mark done'}
+                </button>
               )}
             </div>
           </div>
         </div>
-      </div>
+        </div>
       </div>
     </div>
   );

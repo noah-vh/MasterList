@@ -3,11 +3,16 @@ import { Search, Bell, Menu } from 'lucide-react';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from './convex/_generated/api';
 import { Id } from './convex/_generated/dataModel';
-import { Task, FilterState, ExtractedTaskData, GeneratedViewData, TaskStatus } from './types';
+import { Task, FilterState, ExtractedTaskData, GeneratedViewData, TaskStatus, RoutineTask, TimeBlockTemplate, RoutineFrequency } from './types';
+import { TAG_CATEGORIES } from './constants';
 import { FilterBar } from './components/FilterBar';
 import { TaskCard } from './components/TaskCard';
 import { SmartInput } from './components/SmartInput';
 import { TaskDetailView } from './components/TaskDetailView';
+import { TimelineView } from './components/TimelineView';
+import { EntriesView } from './components/EntriesView';
+import { LibraryView } from './components/LibraryView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // Helper to convert Convex task to frontend Task type
@@ -27,12 +32,45 @@ const convexTaskToTask = (convexTask: any): Task => {
     source: convexTask.source,
     linkedTasks: convexTask.linkedTasks,
     parentTaskId: convexTask.parentTaskId,
+    isRoutine: convexTask.isRoutine,
   };
 };
 
 const App: React.FC = () => {
   const convexTasks = useQuery(api.tasks.list) ?? [];
-  const tasks = useMemo(() => convexTasks.map(convexTaskToTask), [convexTasks]);
+  const routinesData = useQuery(api.routines.list) ?? [];
+  const templates = useQuery(api.timeBlocks.listTemplates) ?? [];
+  const defaultTemplate = useQuery(api.timeBlocks.getDefaultTemplate);
+  const createTemplate = useMutation(api.timeBlocks.createTemplate);
+  
+  // Merge tasks with routine data
+  const tasks = useMemo(() => {
+    const baseTasks = convexTasks.map(convexTaskToTask);
+    return baseTasks.map(task => {
+      const routineData = routinesData.find((r: any) => r.task?._id === task.id);
+      if (routineData && task.isRoutine) {
+        const routineTask: RoutineTask = {
+          ...task,
+          routine: {
+            id: routineData._id,
+            taskId: task.id,
+            frequency: routineData.frequency as RoutineFrequency,
+            daysOfWeek: routineData.daysOfWeek,
+            customInterval: routineData.customInterval,
+            timeEstimate: routineData.timeEstimate,
+            goal: routineData.goal,
+            trackStreaks: routineData.trackStreaks,
+            lastCompletedDate: routineData.lastCompletedDate,
+            currentStreak: routineData.currentStreak,
+            longestStreak: routineData.longestStreak,
+            completionHistory: routineData.completionHistory,
+          },
+        };
+        return routineTask;
+      }
+      return task;
+    });
+  }, [convexTasks, routinesData]);
   
   const createTask = useMutation(api.tasks.create);
   const updateTask = useMutation(api.tasks.update);
@@ -47,7 +85,10 @@ const App: React.FC = () => {
   });
   const [currentViewName, setCurrentViewName] = useState<string | undefined>(undefined);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [currentView, setCurrentView] = useState<'master' | 'today'>('master');
+  const [currentView, setCurrentView] = useState<'library' | 'entries' | 'today' | 'master' | 'routines' | 'timeline'>('entries');
+  const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
+  const [showRoutinesFilter, setShowRoutinesFilter] = useState(false);
+  const [visibleCategories, setVisibleCategories] = useState<string[]>([]);
   
   // Swipe navigation state
   const swipeStartX = useRef<number | null>(null);
@@ -55,9 +96,32 @@ const App: React.FC = () => {
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Scroll position tracking for each view
-  const todayScrollRef = useRef<HTMLMainElement>(null);
-  const masterScrollRef = useRef<HTMLMainElement>(null);
-  const scrollPositions = useRef<{ today: number; master: number }>({ today: 0, master: 0 });
+  const entriesScrollRef = useRef<HTMLDivElement>(null);
+  const todayScrollRef = useRef<HTMLElement>(null);
+  const masterScrollRef = useRef<HTMLElement>(null);
+  const routinesScrollRef = useRef<HTMLElement>(null);
+  const timelineScrollRef = useRef<HTMLElement>(null);
+  const libraryScrollRef = useRef<HTMLDivElement>(null);
+  const scrollPositions = useRef<{ entries: number; today: number; master: number; routines: number; timeline: number; library: number }>({ 
+    entries: 0,
+    today: 0, 
+    master: 0, 
+    routines: 0, 
+    timeline: 0,
+    library: 0
+  });
+  
+  // Set default template on mount, create one if none exists
+  useEffect(() => {
+    if (defaultTemplate && !selectedTemplateId) {
+      setSelectedTemplateId(defaultTemplate._id);
+    } else if (!defaultTemplate && templates.length === 0 && currentView === 'timeline') {
+      // Create default template if none exists and we're on timeline view
+      createTemplate({ name: 'Default' }).then((templateId) => {
+        setSelectedTemplateId(templateId);
+      });
+    }
+  }, [defaultTemplate, selectedTemplateId, templates.length, currentView, createTemplate]);
 
 // Shared spring transition for unified feel
 const SPRING_TRANSITION = {
@@ -146,9 +210,68 @@ const SPRING_TRANSITION = {
       });
   }, [tasks, filters]);
 
+  // Routines view filtering - show only routine tasks
+  const routinesTasks = useMemo(() => {
+    return tasks.filter(task => {
+      // Must be a routine task
+      if (!task.isRoutine) return false;
+      
+      // Apply filter bar filters
+      // 1. Status filter
+      const matchesStatus = filters.status.length === 0 || filters.status.includes(task.status);
+      if (!matchesStatus) return false;
+      
+      // 2. Tag filter (AND logic - task must have ALL selected tags)
+      const matchesTags = filters.tags.length === 0 || 
+        filters.tags.every(tag => task.tags.includes(tag));
+      if (!matchesTags) return false;
+      
+      // 3. Date scope filter
+      let matchesDate = true;
+      if (filters.dateScope !== 'All') {
+        const targetDate = task.actionDate ? new Date(task.actionDate) : new Date(task.createdAt);
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        
+        const isSameDay = (d1: Date, d2: Date) => 
+          d1.getFullYear() === d2.getFullYear() &&
+          d1.getMonth() === d2.getMonth() &&
+          d1.getDate() === d2.getDate();
+
+        if (filters.dateScope === 'Today') {
+          matchesDate = isSameDay(targetDate, today);
+        } else if (filters.dateScope === 'ThisWeek') {
+          const nextWeek = new Date(today);
+          nextWeek.setDate(today.getDate() + 7);
+          matchesDate = targetDate >= today && targetDate <= nextWeek;
+        } else if (filters.dateScope === 'Overdue') {
+          matchesDate = targetDate < today && !isSameDay(targetDate, today) && !task.isCompleted;
+        }
+      }
+      
+      return matchesStatus && matchesTags && matchesDate;
+    }).sort((a, b) => {
+      if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
+      const aDate = a.actionDate ? new Date(a.actionDate).getTime() : a.createdAt;
+      const bDate = b.actionDate ? new Date(b.actionDate).getTime() : b.createdAt;
+      return bDate - aDate;
+    });
+  }, [tasks, filters]);
+
   // Filter Logic - Tag-based faceted filtering with AND logic
   const filteredTasks = useMemo(() => {
     return tasks.filter(task => {
+      // Screen-specific filtering
+      if (currentView === 'routines') {
+        // Routines view handled separately
+        return false;
+      } else if (currentView === 'master') {
+        // Master view: show all tasks, but filter by routines toggle if enabled
+        if (showRoutinesFilter && !task.isRoutine) {
+          return false;
+        }
+      }
+      
       // 1. Status filter
       const matchesStatus = filters.status.length === 0 || filters.status.includes(task.status);
       
@@ -187,7 +310,7 @@ const SPRING_TRANSITION = {
       const bDate = b.actionDate ? new Date(b.actionDate).getTime() : b.createdAt;
       return bDate - aDate;
     });
-  }, [tasks, filters]);
+  }, [tasks, filters, currentView, showRoutinesFilter]);
 
   const handleToggleTask = async (id: string) => {
     await toggleTask({ id: id as Id<"tasks"> });
@@ -210,6 +333,7 @@ const SPRING_TRANSITION = {
         participants: Array.isArray(data.participants) && data.participants.length > 0 ? data.participants : undefined,
         occurredDate: data.occurredDate || undefined,
         source: data.source || { type: 'manual' as const },
+        isRoutine: data.isRoutine || undefined,
       };
       
       console.log("Creating task with data:", taskData);
@@ -234,6 +358,7 @@ const SPRING_TRANSITION = {
         participants: parentData.participants,
         occurredDate: parentData.occurredDate,
         source: parentData.source,
+        isRoutine: parentData.isRoutine,
       },
       children: childrenData.map(childData => ({
         title: childData.title,
@@ -246,6 +371,7 @@ const SPRING_TRANSITION = {
         participants: childData.participants,
         occurredDate: childData.occurredDate,
         source: childData.source,
+        isRoutine: childData.isRoutine,
       })),
     });
   };
@@ -259,6 +385,7 @@ const SPRING_TRANSITION = {
       actionDateRange: data.filters.actionDateRange,
     });
     setCurrentViewName(data.viewName);
+    // Stay on library view to show results as a card/category
   };
 
   const handleClearView = () => {
@@ -270,7 +397,7 @@ const SPRING_TRANSITION = {
     setSelectedTaskId(id);
   };
 
-  const handleUpdateTask = async (updatedTask: Task) => {
+  const handleUpdateTask = async (updatedTask: RoutineTask) => {
     await updateTask({
       id: updatedTask.id as Id<"tasks">,
       title: updatedTask.title,
@@ -284,6 +411,7 @@ const SPRING_TRANSITION = {
       occurredDate: updatedTask.occurredDate,
       source: updatedTask.source,
       linkedTasks: updatedTask.linkedTasks,
+      isRoutine: updatedTask.isRoutine,
     });
   };
 
@@ -319,13 +447,34 @@ const SPRING_TRANSITION = {
     
     const threshold = 150;
     
-    // Swipe right: Master -> Today (Today is to the left)
-    if (deltaX > threshold && Math.abs(deltaX) > Math.abs(deltaY) && currentView === 'master') {
-      setCurrentView('today');
+    // Swipe navigation for 6 views: Library -> Entries -> Today -> Master -> Routines -> Timeline
+    // Swipe right: Library -> Entries -> Today -> Master -> Routines -> Timeline
+    if (deltaX > threshold && Math.abs(deltaX) > Math.abs(deltaY)) {
+      if (currentView === 'library') {
+        setCurrentView('entries');
+      } else if (currentView === 'entries') {
+        setCurrentView('today');
+      } else if (currentView === 'today') {
+        setCurrentView('master');
+      } else if (currentView === 'master') {
+        setCurrentView('routines');
+      } else if (currentView === 'routines') {
+        setCurrentView('timeline');
+      }
     }
-    // Swipe left: Today -> Master (Master is to the right)
-    else if (deltaX < -threshold && Math.abs(deltaX) > Math.abs(deltaY) && currentView === 'today') {
-      setCurrentView('master');
+    // Swipe left: Timeline -> Routines -> Master -> Today -> Entries -> Library
+    else if (deltaX < -threshold && Math.abs(deltaX) > Math.abs(deltaY)) {
+      if (currentView === 'timeline') {
+        setCurrentView('routines');
+      } else if (currentView === 'routines') {
+        setCurrentView('master');
+      } else if (currentView === 'master') {
+        setCurrentView('today');
+      } else if (currentView === 'today') {
+        setCurrentView('entries');
+      } else if (currentView === 'entries') {
+        setCurrentView('library');
+      }
     }
     
     swipeStartX.current = null;
@@ -375,7 +524,11 @@ const SPRING_TRANSITION = {
   };
 
   // Get tasks for current view
-  const displayTasks = currentView === 'today' ? todayTasks : filteredTasks;
+  const displayTasks = currentView === 'today' 
+    ? todayTasks 
+    : currentView === 'routines' 
+      ? routinesTasks 
+      : filteredTasks;
   
   // Calculate today stats
   const todayStats = useMemo(() => {
@@ -401,6 +554,17 @@ const SPRING_TRANSITION = {
     };
   }, [todayTasks]);
 
+  // Calculate routines stats
+  const routinesStats = useMemo(() => {
+    const activeTasks = routinesTasks.filter(t => !t.isCompleted);
+    const completedTasks = routinesTasks.filter(t => t.isCompleted);
+    return {
+      total: routinesTasks.length,
+      active: activeTasks.length,
+      completed: completedTasks.length,
+    };
+  }, [routinesTasks]);
+
   // Simplified scroll position handling
   useEffect(() => {
     // When switching views, we just need to make sure we aren't scrolled into empty space
@@ -408,7 +572,21 @@ const SPRING_TRANSITION = {
     // We just need to check bounds when switching back to a potentially shorter list
     
     const timeoutId = setTimeout(() => {
-      const targetRef = currentView === 'today' ? todayScrollRef.current : masterScrollRef.current;
+      let targetRef: HTMLElement | null = null;
+      if (currentView === 'entries') {
+        targetRef = entriesScrollRef.current;
+      } else if (currentView === 'today') {
+        targetRef = todayScrollRef.current;
+      } else if (currentView === 'master') {
+        targetRef = masterScrollRef.current;
+      } else if (currentView === 'routines') {
+        targetRef = routinesScrollRef.current;
+      } else if (currentView === 'timeline') {
+        targetRef = timelineScrollRef.current;
+      } else if (currentView === 'library') {
+        targetRef = libraryScrollRef.current;
+      }
+      
       if (!targetRef) return;
       
       const scrollHeight = targetRef.scrollHeight;
@@ -423,7 +601,7 @@ const SPRING_TRANSITION = {
     }, 50); // Short delay to let layout settle
     
     return () => clearTimeout(timeoutId);
-  }, [currentView, todayTasks.length, filteredTasks.length]);
+  }, [currentView, todayTasks.length, filteredTasks.length, routinesTasks.length]);
 
   // We don't need complex manual scroll tracking/restoring anymore because 
   // the <main> elements persist in the DOM within the carousel
@@ -471,14 +649,14 @@ const SPRING_TRANSITION = {
       onTouchMove={handleTouchMove}
       onTouchEnd={handleTouchEnd}
       onMouseDown={handleMouseDown}
-      className="h-[100dvh] flex flex-col max-w-2xl mx-auto bg-[#F3F4F6] overflow-hidden relative select-none"
+      className="h-[100dvh] flex flex-col max-w-2xl mx-auto overflow-hidden relative select-none"
     >
       
       {/* Fixed Header + Filter Container */}
       <div className="fixed top-0 left-0 right-0 z-20 pointer-events-none">
         {/* Unified Background with Blur and Fade */}
         <div 
-          className="absolute inset-0 bg-[#F3F4F6]/85 backdrop-blur-xl"
+          className="absolute inset-0 z-0 bg-[#F3F4F6]/60 backdrop-blur-xl border-b border-white/20"
           style={{ 
             maskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)',
             WebkitMaskImage: 'linear-gradient(to bottom, black 70%, transparent 100%)'
@@ -490,6 +668,98 @@ const SPRING_TRANSITION = {
           <header className="flex items-center justify-between px-4 pt-4 pb-2 shrink-0 relative z-10">
             <div className="flex-1 min-w-0 flex flex-col justify-center">
               <div className="flex items-start gap-2 h-8"> {/* Restored fixed height for consistent vertical alignment */}
+                {/* Library Section */}
+                <motion.div 
+                  className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full"
+                  onClick={() => setCurrentView('library')}
+                  animate={{ 
+                    width: currentView === 'library' ? 'auto' : '6px',
+                  }}
+                  transition={SPRING_TRANSITION}
+                >
+                  <div className="flex items-center h-6 relative">
+                    {currentView !== 'library' && (
+                      <motion.div
+                        className="absolute left-0 top-0 bottom-0 w-1.5 bg-gray-300 group-hover:bg-gray-400 rounded-full transition-colors"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={SPRING_TRANSITION}
+                      />
+                    )}
+                    <motion.h1 
+                      animate={{ 
+                        opacity: currentView === 'library' ? 1 : 0,
+                        scaleX: currentView === 'library' ? 1 : 0,
+                        x: currentView === 'library' ? 0 : -15 
+                      }}
+                      transition={SPRING_TRANSITION}
+                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
+                    >
+                      Library
+                    </motion.h1>
+                  </div>
+                  <AnimatePresence>
+                    {currentView === 'library' && (
+                      <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        transition={SPRING_TRANSITION}
+                        className="text-xs text-gray-500 whitespace-nowrap absolute top-full mt-0.5 pl-0.5 left-0"
+                      >
+                        <span className="text-gray-400">Organized by tags</span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+
+                {/* Entries Section */}
+                <motion.div 
+                  className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full"
+                  onClick={() => setCurrentView('entries')}
+                  animate={{ 
+                    width: currentView === 'entries' ? 'auto' : '6px',
+                  }}
+                  transition={SPRING_TRANSITION}
+                >
+                  <div className="flex items-center h-6 relative">
+                    {currentView !== 'entries' && (
+                      <motion.div
+                        className="absolute left-0 top-0 bottom-0 w-1.5 bg-gray-300 group-hover:bg-gray-400 rounded-full transition-colors"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={SPRING_TRANSITION}
+                      />
+                    )}
+                    <motion.h1 
+                      animate={{ 
+                        opacity: currentView === 'entries' ? 1 : 0,
+                        scaleX: currentView === 'entries' ? 1 : 0,
+                        x: currentView === 'entries' ? 0 : -15 
+                      }}
+                      transition={SPRING_TRANSITION}
+                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
+                    >
+                      Entries
+                    </motion.h1>
+                  </div>
+                  <AnimatePresence>
+                    {currentView === 'entries' && (
+                      <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        transition={SPRING_TRANSITION}
+                        className="text-xs text-gray-500 whitespace-nowrap absolute top-full mt-0.5 pl-0.5 left-0"
+                      >
+                        <span className="text-gray-400">Activity timeline</span>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+
                 {/* Today Section */}
                 <motion.div 
                   className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full" // Center content vertically
@@ -608,6 +878,110 @@ const SPRING_TRANSITION = {
                     )}
                   </AnimatePresence>
                 </motion.div>
+
+                {/* Routines Section */}
+                <motion.div 
+                  className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full"
+                  onClick={() => setCurrentView('routines')}
+                  animate={{ 
+                    width: currentView === 'routines' ? 'auto' : '6px',
+                  }}
+                  transition={SPRING_TRANSITION}
+                >
+                  <div className="flex items-center h-6 relative">
+                    {currentView !== 'routines' && (
+                      <motion.div
+                        className="absolute left-0 top-0 bottom-0 w-1.5 bg-gray-300 group-hover:bg-gray-400 rounded-full transition-colors"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={SPRING_TRANSITION}
+                      />
+                    )}
+                    <motion.h1 
+                      animate={{ 
+                        opacity: currentView === 'routines' ? 1 : 0,
+                        scaleX: currentView === 'routines' ? 1 : 0,
+                        x: currentView === 'routines' ? 0 : -15 
+                      }}
+                      transition={SPRING_TRANSITION}
+                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
+                    >
+                      Routines
+                    </motion.h1>
+                  </div>
+                  <AnimatePresence>
+                    {currentView === 'routines' && (
+                      <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        transition={SPRING_TRANSITION}
+                        className="text-xs text-gray-500 whitespace-nowrap absolute top-full mt-0.5 pl-0.5 left-0"
+                      >
+                        {routinesStats.total > 0 ? (
+                          <>
+                            {routinesStats.active} active
+                            {routinesStats.completed > 0 && ` • ${routinesStats.completed} done`}
+                          </>
+                        ) : (
+                          <span className="text-gray-400">No routines</span>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+
+                {/* Timeline Section */}
+                <motion.div 
+                  className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full"
+                  onClick={() => setCurrentView('timeline')}
+                  animate={{ 
+                    width: currentView === 'timeline' ? 'auto' : '6px',
+                  }}
+                  transition={SPRING_TRANSITION}
+                >
+                  <div className="flex items-center h-6 relative">
+                    {currentView !== 'timeline' && (
+                      <motion.div
+                        className="absolute left-0 top-0 bottom-0 w-1.5 bg-gray-300 group-hover:bg-gray-400 rounded-full transition-colors"
+                        initial={{ opacity: 0 }}
+                        animate={{ opacity: 1 }}
+                        exit={{ opacity: 0 }}
+                        transition={SPRING_TRANSITION}
+                      />
+                    )}
+                    <motion.h1 
+                      animate={{ 
+                        opacity: currentView === 'timeline' ? 1 : 0,
+                        scaleX: currentView === 'timeline' ? 1 : 0,
+                        x: currentView === 'timeline' ? 0 : -15 
+                      }}
+                      transition={SPRING_TRANSITION}
+                      className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
+                    >
+                      Time Blocks
+                    </motion.h1>
+                  </div>
+                  <AnimatePresence>
+                    {currentView === 'timeline' && (
+                      <motion.div
+                        initial={{ opacity: 0, x: -20 }}
+                        animate={{ opacity: 1, x: 0 }}
+                        exit={{ opacity: 0, x: -20 }}
+                        transition={SPRING_TRANSITION}
+                        className="text-xs text-gray-500 whitespace-nowrap absolute top-full mt-0.5 pl-0.5 left-0"
+                      >
+                        {selectedTemplateId ? (
+                          <span>{templates.find((t: any) => t._id === selectedTemplateId)?.name || 'Template'}</span>
+                        ) : (
+                          <span className="text-gray-400">No template</span>
+                        )}
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </motion.div>
+
               </div>
             </div>
             <div className="flex items-center gap-4 text-gray-500 flex-shrink-0">
@@ -628,6 +1002,20 @@ const SPRING_TRANSITION = {
               setFilters={setFilters} 
               currentViewName={currentViewName}
               onClearView={handleClearView}
+              currentView={currentView}
+              showRoutinesFilter={showRoutinesFilter}
+              onToggleRoutinesFilter={setShowRoutinesFilter}
+              templates={templates.map((t: any) => ({ id: t._id, name: t.name, createdAt: t.createdAt, isDefault: t.isDefault }))}
+              selectedTemplateId={selectedTemplateId}
+              onSelectTemplate={setSelectedTemplateId}
+              visibleCategories={visibleCategories}
+              onToggleCategory={(category, visible) => {
+                setVisibleCategories(prev => 
+                  visible 
+                    ? [...prev, category].filter((v, i, a) => a.indexOf(v) === i)
+                    : prev.filter(c => c !== category)
+                );
+              }}
             />
           </div>
         </div>
@@ -647,16 +1035,65 @@ const SPRING_TRANSITION = {
         <motion.div
           className="flex h-full"
           animate={{
-            x: currentView === 'today' ? 0 : '-50%',
+            x: currentView === 'library' ? 0 : 
+               currentView === 'entries' ? '-16.666%' : 
+               currentView === 'today' ? '-33.333%' : 
+               currentView === 'master' ? '-50%' : 
+               currentView === 'routines' ? '-66.666%' : '-83.333%',
           }}
           transition={SPRING_TRANSITION}
           style={{
-            width: '200%',
+            width: '600%',
             height: '100%',
           }}
         >
+          {/* Library View */}
+          <div className="w-full h-full flex flex-col" style={{ width: '16.666%' }}>
+            <ErrorBoundary>
+              <LibraryView 
+                tasks={tasks}
+                activeFilters={filters}
+                currentViewName={currentViewName}
+                visibleCategories={visibleCategories}
+                onClearSearch={handleClearView}
+                onTagClick={(tag) => {
+                  setFilters(prev => ({ ...prev, tags: [tag] }));
+                  setCurrentViewName(undefined);
+                }}
+                onCategoryClick={(category) => {
+                  if (category === 'all') {
+                    setFilters({ tags: [], status: [], dateScope: 'All' });
+                    setCurrentViewName(undefined);
+                  } else if (category.startsWith('content:')) {
+                    // Handle content category clicks - could filter entries by classification
+                    setCurrentViewName(undefined);
+                  } else {
+                    // Handle tag category clicks - get all tags in that category
+                    const categoryTags = Object.values(TAG_CATEGORIES[category as keyof typeof TAG_CATEGORIES] || []);
+                    setFilters(prev => ({ ...prev, tags: categoryTags }));
+                    setCurrentViewName(undefined);
+                  }
+                }}
+                onTaskClick={handleTaskClick}
+                onToggleTask={handleToggleTask}
+                scrollRef={libraryScrollRef}
+              />
+            </ErrorBoundary>
+          </div>
+
+          {/* Entries View */}
+          <div className="w-full h-full flex flex-col" style={{ width: '16.666%' }}>
+            <ErrorBoundary>
+              <EntriesView 
+                tasks={tasks}
+                onTaskClick={handleTaskClick}
+                scrollRef={entriesScrollRef}
+              />
+            </ErrorBoundary>
+          </div>
+
           {/* Today View */}
-          <main ref={todayScrollRef} className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '50%' }}>
+          <main ref={todayScrollRef} className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '16.666%' }}>
             <div className="space-y-1 min-w-0">
               {todayTasks.length > 0 ? (
                 todayTasks.map(task => (
@@ -682,7 +1119,7 @@ const SPRING_TRANSITION = {
           </main>
 
           {/* Master View */}
-          <main ref={masterScrollRef} className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '50%' }}>
+          <main ref={masterScrollRef} className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '16.666%' }}>
             <div className="space-y-1 min-w-0">
               {filteredTasks.length > 0 ? (
                 filteredTasks.map(task => (
@@ -708,6 +1145,37 @@ const SPRING_TRANSITION = {
               )}
             </div>
           </main>
+
+          {/* Routines View */}
+          <main ref={routinesScrollRef} className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '16.666%' }}>
+            <div className="space-y-1 min-w-0">
+              {routinesTasks.length > 0 ? (
+                routinesTasks.map(task => (
+                  <TaskCard 
+                    key={task.id} 
+                    task={task} 
+                    onToggle={handleToggleTask} 
+                    onClick={handleTaskClick}
+                  />
+                ))
+              ) : (
+                <div className="flex flex-col items-center justify-center pt-20 text-center opacity-50">
+                  <div className="bg-gray-200 p-4 rounded-full mb-4">
+                    <Menu className="w-8 h-8 text-gray-400" />
+                  </div>
+                  <p className="text-gray-500 font-medium">No routines found</p>
+                  <p className="text-sm text-gray-400">
+                    Mark a task as a routine to see it here.
+                  </p>
+                </div>
+              )}
+            </div>
+          </main>
+
+          {/* Timeline View */}
+          <main ref={timelineScrollRef} className="w-full px-4 pt-2 pb-32 overflow-y-auto overflow-x-hidden no-scrollbar" style={{ width: '16.666%' }}>
+            <TimelineView templateId={selectedTemplateId} />
+          </main>
         </motion.div>
       </div>
 
@@ -715,13 +1183,14 @@ const SPRING_TRANSITION = {
       <SmartInput 
         onAddTask={handleAddTask} 
         onApplyView={handleApplyView}
-        onAddProjectWithSubtasks={handleAddProjectWithSubtasks}
+        defaultToRoutine={currentView === 'routines'}
+        currentView={currentView}
       />
 
       {/* Detail Modal */}
       {selectedTaskId && (
         <TaskDetailView 
-          task={tasks.find(t => t.id === selectedTaskId)!}
+          task={tasks.find(t => t.id === selectedTaskId)! as RoutineTask}
           onClose={() => setSelectedTaskId(null)}
           onUpdate={handleUpdateTask}
           onDelete={handleDeleteTask}

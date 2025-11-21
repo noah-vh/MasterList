@@ -39,6 +39,45 @@
     @apply bg-background text-foreground;
     font-family: 'Inter', sans-serif;
     overflow-x: hidden;
+    /* Subtle futuristic mesh gradient background */
+    background-image: 
+      radial-gradient(at 0% 0%, hsla(253,16%,7%,1) 0, transparent 50%), 
+      radial-gradient(at 50% 0%, hsla(225,39%,30%,1) 0, transparent 50%), 
+      radial-gradient(at 100% 0%, hsla(339,49%,30%,1) 0, transparent 50%);
+    background-attachment: fixed;
+  }
+  
+  /* Light mode gradient (overriding the dark one above if we are in light mode, though root vars suggest light mode default) */
+  :root body {
+    background-color: #F3F4F6; /* Fallback */
+    background-image: 
+      radial-gradient(at 0% 0%, rgba(209, 213, 219, 0.3) 0, transparent 50%), 
+      radial-gradient(at 50% 100%, rgba(229, 231, 235, 0.3) 0, transparent 50%), 
+      radial-gradient(at 100% 0%, rgba(209, 213, 219, 0.3) 0, transparent 50%);
+  }
+}
+
+/* Glass utility class */
+@layer utilities {
+  .glass {
+    background-color: rgb(255 255 255 / 0.7);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgb(255 255 255 / 0.4);
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
+  }
+  .glass-hover {
+    transition: all 300ms;
+  }
+  .glass-hover:hover {
+    background-color: rgb(255 255 255 / 0.8);
+  }
+  .glass-dark {
+    background-color: rgb(0 0 0 / 0.4);
+    backdrop-filter: blur(12px);
+    -webkit-backdrop-filter: blur(12px);
+    border: 1px solid rgb(255 255 255 / 0.1);
+    box-shadow: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
   }
 }
 

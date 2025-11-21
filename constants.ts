@@ -188,3 +188,16 @@ export const DEFAULT_FILTER_GROUPS: FilterGroup[] = [
     color: 'bg-cyan-100 text-cyan-700 border-cyan-200',
   },
 ];
+
+// Routine constants
+export const ROUTINE_BADGE_COLOR = 'bg-purple-100 text-purple-700';
+
+export const DAYS_OF_WEEK = [
+  { value: 0, label: 'Sun' },
+  { value: 1, label: 'Mon' },
+  { value: 2, label: 'Tue' },
+  { value: 3, label: 'Wed' },
+  { value: 4, label: 'Thu' },
+  { value: 5, label: 'Fri' },
+  { value: 6, label: 'Sat' },
+];

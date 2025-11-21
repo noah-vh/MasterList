@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { api } from "./_generated/api";
 
 // Query: Get all tasks
 export const list = query({
@@ -120,6 +121,7 @@ export const create = mutation({
     ),
     linkedTasks: v.optional(v.array(v.string())),
     parentTaskId: v.optional(v.string()),
+    isRoutine: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const taskId = await ctx.db.insert("tasks", {
@@ -136,7 +138,15 @@ export const create = mutation({
       source: args.source,
       linkedTasks: args.linkedTasks,
       parentTaskId: args.parentTaskId,
+      isRoutine: args.isRoutine,
     });
+    
+    // Auto-log task creation in entries
+    await ctx.runMutation(api.entries.createActivityLog, {
+      activityType: "task_created",
+      taskId,
+    });
+    
     return taskId;
   },
 });
@@ -171,12 +181,25 @@ export const update = mutation({
       })
     ),
     linkedTasks: v.optional(v.array(v.string())),
+    isRoutine: v.optional(v.boolean()),
   },
   handler: async (ctx, args) => {
     const { id, ...updates } = args;
     const existing = await ctx.db.get(id);
     if (!existing) {
       throw new Error("Task not found");
+    }
+    
+    // If isRoutine is being set to false, delete the routine record
+    if (updates.isRoutine === false && existing.isRoutine === true) {
+      const { internal } = await import("./_generated/api");
+      const routine = await ctx.db
+        .query("routines")
+        .withIndex("by_taskId", (q) => q.eq("taskId", id))
+        .first();
+      if (routine) {
+        await ctx.db.delete(routine._id);
+      }
     }
     
     await ctx.db.patch(id, updates);
@@ -193,9 +216,17 @@ export const toggleComplete = mutation({
       throw new Error("Task not found");
     }
     
+    const newIsCompleted = !task.isCompleted;
     await ctx.db.patch(args.id, {
-      isCompleted: !task.isCompleted,
+      isCompleted: newIsCompleted,
     });
+    
+    // Auto-log task completion/uncompletion in entries
+    await ctx.runMutation(api.entries.createActivityLog, {
+      activityType: newIsCompleted ? "task_completed" : "task_uncompleted",
+      taskId: args.id,
+    });
+    
     return args.id;
   },
 });
@@ -275,6 +306,7 @@ export const createWithSubtasks = mutation({
           id: v.optional(v.string()),
         })
       ),
+      isRoutine: v.optional(v.boolean()),
     }),
     children: v.array(
       v.object({
@@ -303,6 +335,7 @@ export const createWithSubtasks = mutation({
             id: v.optional(v.string()),
           })
         ),
+        isRoutine: v.optional(v.boolean()),
       })
     ),
   },

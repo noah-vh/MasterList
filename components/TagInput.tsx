@@ -1,5 +1,6 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { X, Plus, Search, Tag as TagIcon } from 'lucide-react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Cancel01Icon, Add01Icon, Search01Icon, Tag01Icon } from '@hugeicons/core-free-icons';
 import { TAG_CATEGORIES, TAG_METADATA, getTagMetadata, getAllTags } from '../constants';
 
 interface TagInputProps {
@@ -144,7 +145,7 @@ export const TagInput: React.FC<TagInputProps> = ({
                 onClick={() => handleRemoveTag(tag)}
                 className="hover:bg-black/10 rounded-full p-0.5 transition-colors"
               >
-                <X className="w-3.5 h-3.5" />
+                <HugeiconsIcon icon={Cancel01Icon} size={14} />
               </button>
             </span>
           );
@@ -154,7 +155,7 @@ export const TagInput: React.FC<TagInputProps> = ({
       {/* Input Field */}
       <div className="relative">
         <div className="flex items-center gap-2 px-3 py-2 bg-gray-50 rounded-xl border border-gray-200 focus-within:border-blue-500 focus-within:ring-2 focus-within:ring-blue-500/20 transition-all">
-          <Search className="w-4 h-4 text-gray-400" />
+          <HugeiconsIcon icon={Search01Icon} size={16} className="text-gray-400" />
           <input
             ref={inputRef}
             type="text"
@@ -208,9 +209,9 @@ export const TagInput: React.FC<TagInputProps> = ({
                     >
                       <div className="flex items-center gap-2">
                         {isCustom ? (
-                          <Plus className="w-4 h-4 text-gray-400" />
+                          <HugeiconsIcon icon={Add01Icon} size={16} className="text-gray-400" />
                         ) : (
-                          <TagIcon className="w-4 h-4 text-gray-400" />
+                          <HugeiconsIcon icon={Tag01Icon} size={16} className="text-gray-400" />
                         )}
                         <span className={metadata.color.split(' ')[1] || ''}>
                           {metadata.label}

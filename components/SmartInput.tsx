@@ -10,6 +10,8 @@ import { TaskCreateModal } from './TaskCreateModal';
 interface SmartInputProps {
   onAddTask: (data: ExtractedTaskData) => void;
   onApplyView: (data: GeneratedViewData) => void;
+  defaultToRoutine?: boolean; // When true, default new tasks to be routines
+  currentView?: 'entries' | 'today' | 'master' | 'routines' | 'timeline' | 'library'; // Current page context
 }
 
 const TIME_ESTIMATE_OPTIONS = [
@@ -26,7 +28,24 @@ const TIME_ESTIMATE_OPTIONS = [
   'Multi-day',
 ];
 
-export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }) => {
+// Get contextual placeholder text based on current view
+const getPlaceholderText = (view: 'today' | 'master' | 'routines' | 'timeline' | 'library'): string => {
+  switch (view) {
+    case 'today':
+      return "What needs to get done today?";
+    case 'routines':
+      return "Add a new routine or habit...";
+    case 'timeline':
+      return "Add a task or schedule time...";
+    case 'library':
+      return "Search by tags, categories, or describe what you're looking for...";
+    case 'master':
+    default:
+      return "Add a task or tell me how you feel...";
+  }
+};
+
+export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, defaultToRoutine = false, currentView = 'master' }) => {
   const parseUserIntent = useAction(api.ai.parseUserIntent);
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
@@ -83,6 +102,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
             source: task.source || { type: 'manual' },
             status: task.status || 'Active',
             type: task.type,
+            isRoutine: task.isRoutine !== undefined ? task.isRoutine : (defaultToRoutine ? true : undefined),
           }))
           .filter(task => {
             if (!task.title || task.title.trim() === '') return false;
@@ -125,6 +145,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
           source: aiResponse.taskData.source || { type: 'manual' },
           status: aiResponse.taskData.status || 'Active',
           type: aiResponse.taskData.type,
+          isRoutine: aiResponse.taskData.isRoutine !== undefined ? aiResponse.taskData.isRoutine : (defaultToRoutine ? true : undefined),
         };
         setEditableTaskData(taskData);
         setMultipleTasks([]);
@@ -163,7 +184,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
 
     setIsProcessing(true);
     try {
-      const result = await parseUserIntent({ input });
+      const result = await parseUserIntent({ input, currentView });
       setIsProcessing(false);
       
       if (result) {
@@ -721,7 +742,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
     <div className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none">
       {/* Gradient Fade Background */}
       <div 
-        className="absolute inset-0 bg-[#F3F4F6]/85 backdrop-blur-xl"
+        className="absolute inset-0 bg-[#F3F4F6]/60 backdrop-blur-xl border-t border-white/20"
         style={{
           maskImage: 'linear-gradient(to top, black 60%, transparent 100%)',
           WebkitMaskImage: 'linear-gradient(to top, black 60%, transparent 100%)'
@@ -733,7 +754,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
         
         {/* AI Confirmation Card */}
         {aiResponse && (
-          <div className="absolute bottom-full left-0 right-0 mb-4 bg-white rounded-2xl shadow-xl border border-gray-200 p-5 animate-in slide-in-from-bottom-4 duration-300 max-h-[80vh] overflow-y-auto touch-pan-y">
+          <div className="absolute bottom-full left-0 right-0 mb-4 bg-white/80 backdrop-blur-xl rounded-2xl shadow-xl border border-white/50 p-5 animate-in slide-in-from-bottom-4 duration-300 max-h-[80vh] overflow-y-auto touch-pan-y">
              {aiResponse.error ? (
                <div className="mb-4">
                  <div className="flex items-start justify-between mb-2">
@@ -823,7 +844,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
         )}
 
         {/* Main Input Bar */}
-        <form onSubmit={handleSubmit} className="relative shadow-lg rounded-full group bg-white">
+        <form onSubmit={handleSubmit} className="relative shadow-lg rounded-full group bg-white/70 backdrop-blur-md border border-white/50 hover:bg-white/80 transition-all">
           {/* Instant Entry Toggle */}
           <button
             type="button"
@@ -860,9 +881,9 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder="Add a task or tell me how you feel..."
+            placeholder={getPlaceholderText(currentView)}
             disabled={isProcessing || !!aiResponse}
-            className="w-full pl-14 pr-14 py-4 rounded-full border-none focus:ring-2 focus:ring-blue-500/20 outline-none text-base text-gray-800 placeholder-gray-400 bg-white disabled:bg-gray-50 disabled:text-gray-400 transition-all"
+            className="w-full pl-14 pr-14 py-4 rounded-full border-none focus:ring-2 focus:ring-blue-500/20 outline-none text-base text-gray-800 placeholder-gray-500 bg-transparent disabled:text-gray-400 transition-all"
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
@@ -892,6 +913,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView }
             initialTitle={modalInitialTitle}
             onSave={handleModalSave}
             onClose={() => setShowCreateModal(false)}
+            defaultToRoutine={defaultToRoutine}
           />
         )}
       </div>

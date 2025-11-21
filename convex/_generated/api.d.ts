@@ -9,7 +9,10 @@
  */
 
 import type * as ai from "../ai.js";
+import type * as entries from "../entries.js";
+import type * as routines from "../routines.js";
 import type * as tasks from "../tasks.js";
+import type * as timeBlocks from "../timeBlocks.js";
 
 import type {
   ApiFromModules,
@@ -19,7 +22,10 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   ai: typeof ai;
+  entries: typeof entries;
+  routines: typeof routines;
   tasks: typeof tasks;
+  timeBlocks: typeof timeBlocks;
 }>;
 
 /**

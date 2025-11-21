@@ -1,8 +1,14 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
 
+// Helper function to get today's date as ISO string
+function getTodayISO(): string {
+  const today = new Date();
+  return today.toISOString().split('T')[0];
+}
+
 // Helper function to normalize task data
-function normalizeTaskData(taskData: any, input: string, index: number) {
+function normalizeTaskData(taskData: any, input: string, index: number, currentView?: string) {
   // Ensure title exists - if not, use the input as title
   if (!taskData.title || taskData.title.trim() === '') {
     taskData.title = input.trim().substring(0, 200) || 'New Task';
@@ -10,6 +16,10 @@ function normalizeTaskData(taskData: any, input: string, index: number) {
   // Normalize actionDate from dueDate if needed
   if (taskData.dueDate && !taskData.actionDate) {
     taskData.actionDate = taskData.dueDate;
+  }
+  // If on "today" view and no actionDate specified, default to today
+  if (currentView === 'today' && !taskData.actionDate) {
+    taskData.actionDate = getTodayISO();
   }
   // Ensure tags is always an array (default to empty if missing)
   if (!taskData.tags || !Array.isArray(taskData.tags)) {
@@ -44,11 +54,76 @@ function normalizeTaskData(taskData: any, input: string, index: number) {
   return taskData;
 }
 
+// Generate contextual prompt addition based on current view
+function getContextualPrompt(currentView?: string): string {
+  const viewContext = currentView === 'today' ? `
+═══════════════════════════════════════════════════════════════
+CURRENT CONTEXT: TODAY VIEW
+═══════════════════════════════════════════════════════════════
+The user is on the "Today" page, which shows tasks scheduled for today.
+• DEFAULT actionDate to TODAY's date (YYYY-MM-DD) unless user specifies otherwise
+• Focus on tasks that need to be done today
+• If user mentions "today" or time-sensitive items, prioritize them
+• Examples: "Call John" → actionDate: today, "Meeting at 3pm" → actionDate: today
+` : currentView === 'routines' ? `
+═══════════════════════════════════════════════════════════════
+CURRENT CONTEXT: ROUTINES VIEW
+═══════════════════════════════════════════════════════════════
+The user is on the "Routines" page, which is for creating and managing recurring habits/routines.
+• DEFAULT isRoutine to TRUE unless user explicitly indicates it's NOT a routine
+• Focus on recurring activities, habits, and regular tasks
+• Look for patterns like: daily habits, weekly activities, regular maintenance
+• Examples: "Morning workout" → isRoutine: true, "Brush teeth" → isRoutine: true, "One-time project" → isRoutine: false
+• If user mentions frequency (daily, weekly, every X days), definitely set isRoutine: true
+` : currentView === 'timeline' ? `
+═══════════════════════════════════════════════════════════════
+CURRENT CONTEXT: TIMELINE VIEW
+═══════════════════════════════════════════════════════════════
+The user is on the "Time Blocks" page, which is for scheduling and time management.
+• Focus on tasks with specific times or time estimates
+• If user mentions a time (e.g., "3pm", "morning", "afternoon"), extract it
+• Prioritize timeEstimate field when user mentions duration
+• Consider actionDate if user mentions scheduling for a specific day
+• Examples: "Meeting at 2pm" → actionDate: today, timeEstimate: "1 hour", "Morning workout" → timeEstimate: "30 minutes"
+` : currentView === 'master' ? `
+═══════════════════════════════════════════════════════════════
+CURRENT CONTEXT: MASTER VIEW
+═══════════════════════════════════════════════════════════════
+The user is on the "Master" page, which shows all tasks across all contexts.
+• General task capture - no specific defaults
+• Extract all metadata as usual
+• User may be adding tasks for any time period or context
+` : currentView === 'library' ? `
+═══════════════════════════════════════════════════════════════
+CURRENT CONTEXT: LIBRARY VIEW
+═══════════════════════════════════════════════════════════════
+The user is on the "Library" page, which organizes tasks and entries by tags and categories.
+• User input is likely a SEARCH QUERY to find existing content
+• Interpret as GENERATE_VIEW request to create a custom filter/search
+• Map user's search terms to relevant tags:
+  - "work and tech" → ['Work', 'Tech']
+  - "quick wins" → ['QuickWin', 'Minutes']
+  - "deep focus tasks" → ['DeepFocus', 'HeavyLift']
+  - "coding projects" → ['Tech', 'DeepFocus', 'HeavyLift']
+  - "personal errands" → ['Personal', 'Errand', 'Offline']
+  - "things I can do at home" → ['Offline', 'Personal']
+  - "meetings and calls" → ['Social', 'People']
+  - "creative work" → ['Creative', 'DeepFocus']
+• Create a descriptive viewName that captures the search intent
+• Include multiple tags when user mentions multiple categories
+• If user describes NEW items to add, use CAPTURE_TASK instead
+` : '';
+
+  return viewContext;
+}
+
 const SYSTEM_PROMPT = `
 You are the 'External Brain' OS - an intelligent task capturer and context manager.
 Analyze user input and determine: (A) Add new task(s) to their list, or (B) Generate a filtered view of existing tasks.
 
-CRITICAL: 95% of inputs are tasks to be added. Only use GENERATE_VIEW when user explicitly asks to SEE/FILTER existing tasks.
+CRITICAL: 
+- On LIBRARY view: User input is likely a SEARCH QUERY → Prefer GENERATE_VIEW to create custom filter groups
+- On other views: 95% of inputs are tasks to be added. Only use GENERATE_VIEW when user explicitly asks to SEE/FILTER existing tasks.
 
 ═══════════════════════════════════════════════════════════════
 SCENARIO A: CAPTURE_TASK (DEFAULT FOR MOST INPUTS)
@@ -234,10 +309,11 @@ ADDITIONAL METADATA EXTRACTION
 ═══════════════════════════════════════════════════════════════
 
 actionDate (YYYY-MM-DD): When to see/do this task
-  • "today" → Calculate today's date
+  • "today" → Calculate today's date (use current date: ${new Date().toISOString().split('T')[0]})
   • "tomorrow" → Calculate tomorrow's date
   • "next Monday", "in 3 days" → Calculate relative date
   • "June 15" → Infer current/next year
+  • IMPORTANT: If on TODAY view and no date specified, default to today's date
 
 occurredDate (YYYY-MM-DD): When this was mentioned (if relevant)
 
@@ -282,6 +358,23 @@ status: Infer from context
   • "WaitingOn": Blocked by someone/something
   • "SomedayMaybe": Not urgent, aspirational
   • "Archived": Past/completed context
+
+isRoutine: Detect if task is a recurring routine/habit
+  • Set to true if user mentions:
+    - "every day", "daily", "each day"
+    - "every morning", "every evening", "every night"
+    - "Monday and Friday", "weekdays", "weekends"
+    - "weekly", "monthly"
+    - "every X days" (e.g., "every 3 days")
+    - "routine", "habit", "regularly"
+    - Tasks like "brush teeth", "go to gym", "meditate", "exercise"
+  • Examples:
+    - "Brush my teeth every day" → isRoutine: true
+    - "Go to the gym on Monday, Wednesday, Friday" → isRoutine: true
+    - "Meditate every morning" → isRoutine: true
+    - "Wash face daily" → isRoutine: true
+    - "Eat lunch" (if context suggests daily routine) → isRoutine: true
+  • Default: false (only set to true if clearly a routine)
 
 ═══════════════════════════════════════════════════════════════
 SCENARIO B: GENERATE_VIEW (RARE - ONLY FOR VIEW REQUESTS)
@@ -346,6 +439,7 @@ const RESPONSE_SCHEMA = {
           },
         },
         status: { type: "string", enum: ["Active", "WaitingOn", "SomedayMaybe", "Archived"], nullable: true },
+        isRoutine: { type: "boolean", nullable: true, description: "Whether this task is a recurring routine/habit" },
       },
     },
     tasks: {
@@ -376,6 +470,7 @@ const RESPONSE_SCHEMA = {
             },
           },
           status: { type: "string", enum: ["Active", "WaitingOn", "SomedayMaybe", "Archived"], nullable: true },
+          isRoutine: { type: "boolean", nullable: true, description: "Whether this task is a recurring routine/habit" },
         },
       },
     },
@@ -491,7 +586,16 @@ export const testOpenRouterKey = action({
 });
 
 export const parseUserIntent = action({
-  args: { input: v.string() },
+  args: { 
+    input: v.string(),
+    currentView: v.optional(v.union(
+      v.literal("today"),
+      v.literal("master"),
+      v.literal("routines"),
+      v.literal("timeline"),
+      v.literal("library")
+    ))
+  },
   handler: async (ctx, args) => {
     const apiKey = process.env.OPENROUTER_API_KEY;
     if (!apiKey) {
@@ -508,6 +612,9 @@ export const parseUserIntent = action({
     const model = process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
 
     try {
+      // Get contextual prompt based on current view
+      const contextualPrompt = getContextualPrompt(args.currentView);
+      
       const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -521,7 +628,7 @@ export const parseUserIntent = action({
           messages: [
             {
               role: "system",
-              content: SYSTEM_PROMPT,
+              content: SYSTEM_PROMPT + contextualPrompt,
             },
             {
               role: "user",
@@ -649,7 +756,7 @@ export const parseUserIntent = action({
         if (uniqueTasks.length > 1) {
           // Multiple distinct tasks - normalize them
           parsed.tasks = uniqueTasks.map((task: any, index: number) => {
-            const normalized = normalizeTaskData(task, args.input, index);
+            const normalized = normalizeTaskData(task, args.input, index, args.currentView);
             // Ensure title exists for each task
             if (!normalized.title || normalized.title.trim() === '') {
               normalized.title = `Task ${index + 1}`;
@@ -658,7 +765,7 @@ export const parseUserIntent = action({
           });
         } else if (uniqueTasks.length === 1) {
           // Only one task in array - convert to single taskData
-          parsed.taskData = normalizeTaskData(uniqueTasks[0], args.input, 0);
+          parsed.taskData = normalizeTaskData(uniqueTasks[0], args.input, 0, args.currentView);
           parsed.tasks = null;
         } else {
           // No valid tasks - clear tasks array
@@ -668,7 +775,7 @@ export const parseUserIntent = action({
 
       // Normalize taskData if present - be very lenient, just ensure structure
       if (parsed.taskData) {
-        parsed.taskData = normalizeTaskData(parsed.taskData, args.input, 0);
+        parsed.taskData = normalizeTaskData(parsed.taskData, args.input, 0, args.currentView);
       }
 
       // Normalize viewData filters if present
@@ -703,6 +810,343 @@ export const parseUserIntent = action({
         taskData: null,
         viewData: null,
       };
+    }
+  },
+});
+
+// Chat with LLM for entries chat mode
+export const chatWithLLM = action({
+  args: {
+    messages: v.array(v.object({
+      role: v.union(v.literal("user"), v.literal("assistant")),
+      content: v.string(),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      throw new Error("OpenRouter API key is not configured");
+    }
+
+    const model = process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
+
+    const systemPrompt = `You are a helpful thinking partner. Have a natural, thoughtful conversation with the user. Help them think through ideas, explore concepts, and work through problems. Be concise but thorough, and maintain a conversational tone.`;
+
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "HTTP-Referer": process.env.CONVEX_SITE_URL || "",
+          "X-Title": "Master List",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: systemPrompt,
+            },
+            ...args.messages,
+          ],
+          temperature: 0.7,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`OpenRouter API error: ${response.status} ${errorText}`);
+      }
+
+      const data = await response.json();
+      const assistantMessage = data.choices[0]?.message?.content;
+
+      if (!assistantMessage) {
+        throw new Error("No response from AI");
+      }
+
+      return {
+        content: assistantMessage,
+      };
+    } catch (error) {
+      console.error("Error in chatWithLLM:", error);
+      throw error;
+    }
+  },
+});
+
+// Helper function to extract Open Graph metadata from HTML
+function extractOGMetadata(html: string): {
+  title?: string;
+  description?: string;
+  image?: string;
+  siteName?: string;
+} {
+  const og: { title?: string; description?: string; image?: string; siteName?: string } = {};
+  
+  // Extract og:title
+  const titleMatch = html.match(/<meta\s+property=["']og:title["']\s+content=["']([^"']+)["']/i) ||
+                     html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:title["']/i);
+  if (titleMatch) og.title = titleMatch[1];
+  
+  // Extract og:description
+  const descMatch = html.match(/<meta\s+property=["']og:description["']\s+content=["']([^"']+)["']/i) ||
+                     html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:description["']/i);
+  if (descMatch) og.description = descMatch[1];
+  
+  // Extract og:image
+  const imageMatch = html.match(/<meta\s+property=["']og:image["']\s+content=["']([^"']+)["']/i) ||
+                     html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:image["']/i);
+  if (imageMatch) og.image = imageMatch[1];
+  
+  // Extract og:site_name
+  const siteMatch = html.match(/<meta\s+property=["']og:site_name["']\s+content=["']([^"']+)["']/i) ||
+                     html.match(/<meta\s+content=["']([^"']+)["']\s+property=["']og:site_name["']/i);
+  if (siteMatch) og.siteName = siteMatch[1];
+  
+  // Fallback to regular meta tags if OG tags not found
+  if (!og.title) {
+    const titleTag = html.match(/<title[^>]*>([^<]+)<\/title>/i);
+    if (titleTag) og.title = titleTag[1];
+  }
+  
+  if (!og.description) {
+    const metaDesc = html.match(/<meta\s+name=["']description["']\s+content=["']([^"']+)["']/i) ||
+                      html.match(/<meta\s+content=["']([^"']+)["']\s+name=["']description["']/i);
+    if (metaDesc) og.description = metaDesc[1];
+  }
+  
+  return og;
+}
+
+// Helper function to fetch and extract content from a URL
+async function fetchUrlContent(url: string): Promise<{ text: string; ogMetadata?: any }> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
+      },
+    });
+    
+    if (!response.ok) {
+      throw new Error(`Failed to fetch URL: ${response.status}`);
+    }
+    
+    const html = await response.text();
+    
+    // Extract Open Graph metadata
+    const ogMetadata = extractOGMetadata(html);
+    
+    // Extract text content from HTML (basic implementation)
+    const textContent = html
+      .replace(/<script[^>]*>[\s\S]*?<\/script>/gi, '')
+      .replace(/<style[^>]*>[\s\S]*?<\/style>/gi, '')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim()
+      .substring(0, 10000); // Limit to 10k chars
+    
+    return { text: textContent, ogMetadata: Object.keys(ogMetadata).length > 0 ? ogMetadata : undefined };
+  } catch (error) {
+    console.error('Error fetching URL content:', error);
+    throw error;
+  }
+}
+
+// Action to analyze content (link, image, or text)
+export const analyzeContent = action({
+  args: {
+    contentType: v.union(
+      v.literal("link"),
+      v.literal("image"),
+      v.literal("text"),
+      v.literal("video")
+    ),
+    content: v.string(), // URL for links, base64 for images, text for text
+    originalInput: v.optional(v.string()), // Original user input
+  },
+  handler: async (ctx, args) => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      throw new Error("OPENROUTER_API_KEY is not configured");
+    }
+
+    // Use a vision-capable model for images, or a text model for links/text
+    const model = args.contentType === "image" 
+      ? "google/gemini-pro-vision" // Vision model for images
+      : process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
+
+    let messages: any[] = [];
+    let extractedContent = "";
+
+    // Prepare content based on type
+    let ogMetadata: any = undefined;
+    if (args.contentType === "link") {
+      // Fetch URL content and metadata
+      const urlData = await fetchUrlContent(args.content);
+      extractedContent = urlData.text;
+      ogMetadata = urlData.ogMetadata;
+      
+      messages = [
+        {
+          role: "system",
+          content: `You are a content analyzer and classifier. Analyze the provided web content and extract:
+1. A clear summary of the content
+2. Category/classification (e.g., "UI Design", "Tutorial", "Article", "Video", "Product", "Social Media")
+3. Key topics covered
+4. Main lessons or takeaways
+5. Relevant tags for cataloging
+
+Return a JSON object with this structure:
+{
+  "summary": "Brief summary of the content",
+  "classification": {
+    "category": "Main category name",
+    "topics": ["topic1", "topic2", ...],
+    "keyPoints": ["point1", "point2", ...],
+    "lessons": ["lesson1", "lesson2", ...]
+  },
+  "tags": ["tag1", "tag2", ...],
+  "title": "Extracted or inferred title"
+}`
+        },
+        {
+          role: "user",
+          content: `Analyze this web content from ${args.content}:\n\n${extractedContent}`
+        }
+      ];
+    } else if (args.contentType === "image") {
+      // For images, send as base64 or URL
+      const imageUrl = args.content.startsWith('data:') 
+        ? args.content 
+        : `data:image/jpeg;base64,${args.content}`;
+      
+      messages = [
+        {
+          role: "system",
+          content: `You are a content analyzer for images. Analyze the provided image and extract:
+1. What the image shows (detailed description)
+2. Category/classification (e.g., "UI Screenshot", "Diagram", "Photo", "Screenshot", "Design", "Tutorial")
+3. Key information visible
+4. Lessons or insights if applicable
+5. Relevant tags for cataloging
+
+Return a JSON object with this structure:
+{
+  "summary": "Detailed description of what the image shows",
+  "classification": {
+    "category": "Main category name",
+    "topics": ["topic1", "topic2", ...],
+    "keyPoints": ["point1", "point2", ...],
+    "lessons": ["lesson1", "lesson2", ...]
+  },
+  "tags": ["tag1", "tag2", ...],
+  "title": "Brief title for the image"
+}`
+        },
+        {
+          role: "user",
+          content: [
+            {
+              type: "text",
+              text: `Analyze this image${args.originalInput ? `: ${args.originalInput}` : ''}`
+            },
+            {
+              type: "image_url",
+              image_url: {
+                url: imageUrl
+              }
+            }
+          ]
+        }
+      ];
+    } else {
+      // Text content
+      messages = [
+        {
+          role: "system",
+          content: `You are a content analyzer. Analyze the provided text content and extract:
+1. A clear summary
+2. Category/classification
+3. Key topics
+4. Main lessons or takeaways
+5. Relevant tags
+
+Return a JSON object with this structure:
+{
+  "summary": "Brief summary",
+  "classification": {
+    "category": "Main category name",
+    "topics": ["topic1", "topic2", ...],
+    "keyPoints": ["point1", "point2", ...],
+    "lessons": ["lesson1", "lesson2", ...]
+  },
+  "tags": ["tag1", "tag2", ...],
+  "title": "Extracted or inferred title"
+}`
+        },
+        {
+          role: "user",
+          content: args.content
+        }
+      ];
+    }
+
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "HTTP-Referer": process.env.CONVEX_SITE_URL || "",
+          "X-Title": "Master List Content Analyzer",
+        },
+        body: JSON.stringify({
+          model,
+          messages,
+          response_format: { type: "json_object" },
+          temperature: 0.7,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        let errorMessage = `OpenRouter API error (${response.status})`;
+        try {
+          const errorJson = JSON.parse(errorText);
+          errorMessage = errorJson.error?.message || errorMessage;
+        } catch {
+          errorMessage = errorText || errorMessage;
+        }
+        throw new Error(errorMessage);
+      }
+
+      const data = await response.json();
+      const content = data.choices?.[0]?.message?.content;
+
+      if (!content) {
+        throw new Error("No content in OpenRouter response");
+      }
+
+      const parsed = JSON.parse(content);
+      
+      return {
+        summary: parsed.summary || "",
+        classification: parsed.classification || {
+          category: "Uncategorized",
+          topics: [],
+          keyPoints: [],
+          lessons: [],
+        },
+        tags: parsed.tags || [],
+        title: parsed.title || "Untitled Content",
+        extractedContent: args.contentType === "link" ? extractedContent : undefined,
+        ogMetadata: ogMetadata,
+      };
+    } catch (error) {
+      console.error("Error analyzing content:", error);
+      throw error;
     }
   },
 });

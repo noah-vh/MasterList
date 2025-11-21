@@ -49,6 +49,34 @@ export interface Task {
     id?: string;
   };
   linkedTasks?: string[]; // Related task IDs
+  isRoutine?: boolean; // Whether this task is a routine
+  parentTaskId?: string; // Reference to parent task if subtask
+}
+
+export enum RoutineFrequency {
+  Daily = 'Daily',
+  Weekly = 'Weekly',
+  Monthly = 'Monthly',
+  Custom = 'Custom',
+}
+
+export interface Routine {
+  id: string;
+  taskId: string;
+  frequency: RoutineFrequency;
+  daysOfWeek?: number[]; // Array of 0-6 for weekly schedules (0 = Sunday, 6 = Saturday)
+  customInterval?: number; // Days for custom intervals
+  timeEstimate?: string; // Routine-specific time estimate
+  goal?: string; // Goal/target description
+  trackStreaks: boolean;
+  lastCompletedDate?: string; // ISO date string
+  currentStreak?: number;
+  longestStreak?: number;
+  completionHistory?: string[]; // Array of ISO date strings
+}
+
+export interface RoutineTask extends Task {
+  routine?: Routine;
 }
 
 export type DateScope = 'All' | 'Today' | 'ThisWeek' | 'Overdue';
@@ -88,6 +116,7 @@ export interface ExtractedTaskData {
     type: 'voice' | 'email' | 'transcript' | 'manual';
     id?: string;
   };
+  isRoutine?: boolean; // Whether this task is a routine
 }
 
 // Payload for applying a dynamic filter view
@@ -104,4 +133,59 @@ export interface AIResponse {
   tasks?: ExtractedTaskData[] | null; // Multiple tasks if user mentioned multiple items
   viewData?: GeneratedViewData | null;
   error?: string; // Error message if API call failed
+}
+
+// Time Block Types
+export interface TimeBlockTemplate {
+  id: string;
+  name: string;
+  createdAt: number;
+  isDefault: boolean;
+}
+
+export interface TimeBlock {
+  id: string;
+  templateId: string;
+  startTime: number; // minutes from midnight (0-1439)
+  endTime: number; // minutes from midnight (0-1439)
+  title?: string;
+  color?: string;
+  createdAt: number;
+}
+
+// Entry Types
+export interface Entry {
+  id: string;
+  content: string;
+  createdAt: number;
+  updatedAt: number;
+  entryType: 'manual' | 'activity' | 'content';
+  activityType?: 'task_created' | 'task_completed' | 'task_uncompleted' | 'attachment_added';
+  linkedTaskId?: string; // For activity logs (single task)
+  linkedTaskIds?: string[]; // For manual entries (multiple tasks)
+  tags?: string[];
+  hasAttachment?: boolean; // For manual entries with attachments
+  // Content logging fields
+  contentType?: 'link' | 'image' | 'text' | 'video' | 'chat';
+  sourceUrl?: string;
+  sourceImageId?: string;
+  analyzedContent?: string;
+  ogMetadata?: {
+    title?: string;
+    description?: string;
+    image?: string;
+    siteName?: string;
+  };
+  classification?: {
+    category: string;
+    topics: string[];
+    keyPoints: string[];
+    lessons: string[];
+  };
+  // Chat thread fields
+  chatThread?: Array<{
+    role: 'user' | 'assistant';
+    content: string;
+    timestamp: number;
+  }>;
 }

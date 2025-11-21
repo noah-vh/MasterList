@@ -7,6 +7,7 @@ interface TaskCreateModalProps {
   initialTitle: string;
   onSave: (data: ExtractedTaskData) => void;
   onClose: () => void;
+  defaultToRoutine?: boolean; // When true, default new tasks to be routines
 }
 
 const statusDotColors: Record<TaskStatus, string> = {
@@ -16,11 +17,12 @@ const statusDotColors: Record<TaskStatus, string> = {
   [TaskStatus.Archived]: 'bg-slate-400',
 };
 
-export const TaskCreateModal: React.FC<TaskCreateModalProps> = ({ initialTitle, onSave, onClose }) => {
+export const TaskCreateModal: React.FC<TaskCreateModalProps> = ({ initialTitle, onSave, onClose, defaultToRoutine = false }) => {
   const [taskData, setTaskData] = useState<ExtractedTaskData>({
     title: initialTitle,
     status: TaskStatus.Active,
     tags: [],
+    isRoutine: defaultToRoutine ? true : undefined,
   });
 
   const handleChange = (field: keyof ExtractedTaskData, value: any) => {
