@@ -131,5 +131,17 @@ export default defineSchema({
   })
     .index("by_createdAt", ["createdAt"])
     .index("by_contentType", ["contentType"]),
+  userSettings: defineTable({
+    userId: v.string(),
+    openRouterApiKey: v.optional(v.string()),
+    modelTaskClassification: v.optional(v.string()),
+    modelChat: v.optional(v.string()),
+    modelChatTitle: v.optional(v.string()),
+    modelContentAnalysisText: v.optional(v.string()),
+    modelContentAnalysisImage: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_userId", ["userId"]),
 });
 

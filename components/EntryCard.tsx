@@ -509,10 +509,17 @@ export const EntryCard: React.FC<EntryCardProps> = ({
               }
               e.preventDefault();
               e.stopPropagation();
-              const newExpanded = !isChatExpanded;
-              setIsChatExpanded(newExpanded);
+              // Toggle active chat - opens in SmartInput
               if (onChatActiveChange) {
-                onChatActiveChange(newExpanded);
+                if (isChatExpanded) {
+                  // Collapse - clear active chat
+                  setIsChatExpanded(false);
+                  onChatActiveChange(false);
+                } else {
+                  // Expand - set this entry as active
+                  setIsChatExpanded(true);
+                  onChatActiveChange(true);
+                }
               }
             }}
           >
@@ -534,12 +541,12 @@ export const EntryCard: React.FC<EntryCardProps> = ({
                         <div
                           className={`max-w-[85%] ${
                             message.role === 'user'
-                              ? 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20'
+                              ? 'bg-blue-500/10 text-blue-700 border border-blue-500/20 rounded-2xl px-4 py-2.5'
                               : 'bg-gray-50 text-gray-900 border border-gray-200 rounded-2xl px-4 py-2.5'
                           }`}
                         >
                           {message.role === 'user' ? (
-                            <p className="text-xs font-medium text-blue-700 whitespace-pre-wrap break-words line-clamp-2">
+                            <p className="text-sm font-medium whitespace-pre-wrap break-words line-clamp-2">
                               {message.content}
                             </p>
                           ) : (
@@ -559,45 +566,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
                 </div>
               )}
               
-              {/* Expanded Chat Interface - Interactive when expanded, stays in place */}
-              {isChatExpanded && (
-                <div className="mt-4">
-                  <ChatInterface
-                    onSave={async () => {}}
-                    onCancel={() => {
-                      setIsChatExpanded(false);
-                      if (onChatActiveChange) {
-                        onChatActiveChange(false);
-                      }
-                    }}
-                    onCollapse={async () => {
-                      setIsChatExpanded(false);
-                      if (onChatActiveChange) {
-                        onChatActiveChange(false);
-                      }
-                    }}
-                    messages={entry.chatThread.map(m => ({
-                      role: m.role,
-                      content: m.content,
-                      timestamp: m.timestamp || Date.now(),
-                    }))}
-                    isSubmitting={false}
-                    readOnly={true}
-                    showCollapseButton={true}
-                    onCollapseClick={() => {
-                      setIsChatExpanded(false);
-                      if (onChatActiveChange) {
-                        onChatActiveChange(false);
-                      }
-                    }}
-                    chatName={chatName}
-                  />
-                  {/* Subtle notice that user is engaged in this conversation */}
-                  <p className="text-xs text-gray-400 text-center italic pt-1">
-                    Active conversation
-                  </p>
-                </div>
-              )}
+              {/* No inline expansion - chat opens in SmartInput instead */}
             </div>
           </div>
         </div>

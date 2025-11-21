@@ -1,5 +1,6 @@
 import { action } from "./_generated/server";
 import { v } from "convex/values";
+import { getUserApiKey, getUserModel } from "./settings";
 
 // Helper function to get today's date as ISO string
 function getTodayISO(): string {
@@ -505,11 +506,11 @@ const RESPONSE_SCHEMA = {
 // Test action to verify OpenRouter API key is working
 export const testOpenRouterKey = action({
   handler: async (ctx) => {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = await getUserApiKey(ctx);
     if (!apiKey) {
       return {
         success: false,
-        error: "OPENROUTER_API_KEY is not set in Convex environment",
+        error: "OpenRouter API key is not configured. Please set it in Settings.",
       };
     }
 
@@ -597,19 +598,18 @@ export const parseUserIntent = action({
     ))
   },
   handler: async (ctx, args) => {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = await getUserApiKey(ctx);
     if (!apiKey) {
-      console.error("OPENROUTER_API_KEY is missing");
+      console.error("OpenRouter API key is missing");
       return {
-        error: "OpenRouter API key is not configured. Please set OPENROUTER_API_KEY in your Convex environment.",
+        error: "OpenRouter API key is not configured. Please set it in Settings.",
         intent: null,
         taskData: null,
         viewData: null,
       };
     }
 
-    // Default to Claude 3.5 Sonnet, but can be overridden via env var
-    const model = process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
+    const model = await getUserModel(ctx, "taskClassification");
 
     try {
       // Get contextual prompt based on current view
@@ -823,12 +823,12 @@ export const chatWithLLM = action({
     })),
   },
   handler: async (ctx, args) => {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = await getUserApiKey(ctx);
     if (!apiKey) {
-      throw new Error("OpenRouter API key is not configured");
+      throw new Error("OpenRouter API key is not configured. Please set it in Settings.");
     }
 
-    const model = process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
+    const model = await getUserModel(ctx, "chat");
 
     const systemPrompt = `You are a helpful thinking partner. Have a natural, thoughtful conversation with the user. Help them think through ideas, explore concepts, and work through problems. Be concise but thorough, and maintain a conversational tone.`;
 
@@ -885,13 +885,13 @@ export const generateChatTitle = action({
     })),
   },
   handler: async (ctx, args) => {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = await getUserApiKey(ctx);
     if (!apiKey) {
-      console.error("OPENROUTER_API_KEY is missing");
+      console.error("OpenRouter API key is missing");
       return "Chat conversation";
     }
 
-    const model = process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
+    const model = await getUserModel(ctx, "chatTitle");
 
     // Take first 3-4 messages to understand the conversation topic
     const conversationSample = args.messages.slice(0, 4);
@@ -1053,15 +1053,15 @@ export const analyzeContent = action({
     originalInput: v.optional(v.string()), // Original user input
   },
   handler: async (ctx, args) => {
-    const apiKey = process.env.OPENROUTER_API_KEY;
+    const apiKey = await getUserApiKey(ctx);
     if (!apiKey) {
-      throw new Error("OPENROUTER_API_KEY is not configured");
+      throw new Error("OpenRouter API key is not configured. Please set it in Settings.");
     }
 
     // Use a vision-capable model for images, or a text model for links/text
     const model = args.contentType === "image" 
-      ? "google/gemini-pro-vision" // Vision model for images
-      : process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
+      ? await getUserModel(ctx, "contentAnalysisImage")
+      : await getUserModel(ctx, "contentAnalysisText");
 
     let messages: any[] = [];
     let extractedContent = "";

@@ -11,6 +11,7 @@
 import type * as ai from "../ai.js";
 import type * as entries from "../entries.js";
 import type * as routines from "../routines.js";
+import type * as settings from "../settings.js";
 import type * as tasks from "../tasks.js";
 import type * as timeBlocks from "../timeBlocks.js";
 
@@ -24,6 +25,7 @@ declare const fullApi: ApiFromModules<{
   ai: typeof ai;
   entries: typeof entries;
   routines: typeof routines;
+  settings: typeof settings;
   tasks: typeof tasks;
   timeBlocks: typeof timeBlocks;
 }>;

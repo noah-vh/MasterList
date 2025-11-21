@@ -23,6 +23,7 @@ interface ChatInterfaceProps {
   showCollapseButton?: boolean; // When true, show collapse button even in read-only mode
   onCollapseClick?: () => void; // Handler for collapse button click
   chatName?: string; // Optional name/title for the chat
+  hideInput?: boolean; // When true, hide the input field (for use above SmartInput)
 }
 
 export const ChatInterface: React.FC<ChatInterfaceProps> = ({
@@ -37,6 +38,7 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
   showCollapseButton = false,
   onCollapseClick,
   chatName,
+  hideInput = false,
 }) => {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [input, setInput] = useState('');
@@ -99,12 +101,10 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
           {/* Header with chat name and collapse button - show if not read-only OR if showCollapseButton is true */}
           {(!readOnly || showCollapseButton) && (
             <div className="flex items-center justify-between pb-1.5">
-              {chatName && (
-                <h3 className="text-sm font-medium text-gray-900">{chatName}</h3>
-              )}
+              <h3 className="text-sm font-medium text-gray-900">{chatName || 'Chat'}</h3>
               <button
                 onClick={showCollapseButton && onCollapseClick ? onCollapseClick : (messages.length >= 2 ? handleCollapse : onCancel)}
-                className="p-1.5 -mt-1 -mr-1 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-all ml-auto"
+                className="p-1.5 -mt-1 -mr-1 text-gray-400 hover:text-gray-600 hover:bg-gray-50 rounded-lg transition-all"
               >
                 <ChevronDown className="w-4 h-4" />
               </button>
@@ -127,12 +127,12 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
                     <div
                       className={`max-w-[85%] ${
                         message.role === 'user'
-                          ? 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20'
+                          ? 'bg-blue-500/10 text-blue-700 border border-blue-500/20 rounded-2xl px-4 py-2.5'
                           : 'bg-gray-50 text-gray-900 border border-gray-200 rounded-2xl px-4 py-2.5'
                       }`}
                     >
                       {message.role === 'user' ? (
-                        <p className="text-xs font-medium text-blue-700 whitespace-pre-wrap break-words">{message.content}</p>
+                        <p className="text-sm font-medium whitespace-pre-wrap break-words">{message.content}</p>
                       ) : (
                         <p className="text-sm whitespace-pre-wrap break-words leading-relaxed">{message.content}</p>
                       )}
@@ -151,8 +151,8 @@ export const ChatInterface: React.FC<ChatInterfaceProps> = ({
             )}
           </div>
 
-          {/* Input - only show if not read-only */}
-          {!readOnly && onSendMessage && (
+          {/* Input - only show if not read-only and not hidden */}
+          {!readOnly && !hideInput && onSendMessage && (
             <div className="px-4 pb-4">
               <form onSubmit={handleSubmit} className="relative shadow-lg rounded-full group bg-white/70 backdrop-blur-md border border-white/50 hover:bg-white/80 transition-all">
                 <input

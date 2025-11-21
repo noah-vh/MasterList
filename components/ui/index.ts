@@ -7,4 +7,5 @@ export { DropdownMenu, DropdownMenuTrigger, DropdownMenuContent, DropdownMenuIte
 export { Popover, PopoverTrigger, PopoverContent } from './popover';
 export { Input } from './input';
 export { Textarea } from './textarea';
+export { Label } from './label';
 

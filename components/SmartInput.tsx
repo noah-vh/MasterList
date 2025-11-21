@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { ArrowUp, X, Loader2, LayoutTemplate, CheckCircle2, ChevronRight, Plus, Calendar, Clock, Sparkles, PenTool } from 'lucide-react';
+import { ArrowUp, X, Loader2, LayoutTemplate, CheckCircle2, ChevronRight, Plus, Calendar, Clock, Sparkles, PenTool, Maximize2, Minimize2 } from 'lucide-react';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { Message01Icon, Pen01Icon } from '@hugeicons/core-free-icons';
 import { useAction, useMutation, useQuery } from 'convex/react';
@@ -17,6 +17,7 @@ interface SmartInputProps {
   defaultToRoutine?: boolean; // When true, default new tasks to be routines
   currentView?: 'entries' | 'today' | 'master' | 'routines' | 'timeline' | 'library'; // Current page context
   activeChatEntryId?: string | null; // ID of the active chat entry to route messages to
+  onActiveChatChange?: (entryId: string | null) => void; // Callback to update active chat entry ID
 }
 
 const TIME_ESTIMATE_OPTIONS = [
@@ -52,7 +53,7 @@ const getPlaceholderText = (view: 'entries' | 'today' | 'master' | 'routines' | 
   }
 };
 
-export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, onAddEntry, defaultToRoutine = false, currentView = 'master', activeChatEntryId }) => {
+export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, onAddEntry, defaultToRoutine = false, currentView = 'master', activeChatEntryId, onActiveChatChange }) => {
   const parseUserIntent = useAction(api.ai.parseUserIntent);
   const analyzeContent = useAction(api.ai.analyzeContent);
   const createContentEntry = useMutation(api.entries.createContentEntry);
@@ -64,17 +65,42 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [aiResponse, setAiResponse] = useState<AIResponse | null>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
+  const inputRef = useRef<HTMLTextAreaElement>(null);
   const [isInstantMode, setIsInstantMode] = useState(false);
   const [isChatMode, setIsChatMode] = useState(false); // For entries view
   const [showChatInterface, setShowChatInterface] = useState(false);
   const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>>([]);
   const [isChatSubmitting, setIsChatSubmitting] = useState(false);
+  const [isFullscreen, setIsFullscreen] = useState(false);
+  const [showFullscreenButton, setShowFullscreenButton] = useState(false);
   const chatWithLLM = useAction(api.ai.chatWithLLM);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [modalInitialTitle, setModalInitialTitle] = useState('');
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  // Effect to load chat messages when activeChatEntryId is set
+  useEffect(() => {
+    if (activeChatEntryId && entries && currentView === 'entries') {
+      const activeEntry = entries.find((e: any) => e._id === activeChatEntryId);
+      if (activeEntry && activeEntry.chatThread) {
+        // Load existing chat messages
+        setChatMessages(activeEntry.chatThread.map((m: any) => ({
+          role: m.role,
+          content: m.content,
+          timestamp: m.timestamp || Date.now(),
+        })));
+        // Show chat interface
+        setShowChatInterface(true);
+        // Enable chat mode
+        setIsChatMode(true);
+      }
+    } else if (!activeChatEntryId && currentView === 'entries') {
+      // When activeChatEntryId is cleared, hide chat interface
+      setShowChatInterface(false);
+      setChatMessages([]);
+    }
+  }, [activeChatEntryId, entries, currentView]);
 
   // Local state for editable task data
   const [editableTaskData, setEditableTaskData] = useState<ExtractedTaskData | null>(null);
@@ -212,6 +238,24 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
 
   const handleChatSave = async (thread: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>) => {
     try {
+      // If there's an active chat entry, it's already saved (we update it as we go)
+      // Just close the interface and clear active chat
+      if (activeChatEntryId) {
+        setShowChatInterface(false);
+        setChatMessages([]);
+        setInput('');
+        setIsChatMode(false);
+        // Clear the active chat entry ID
+        if (onActiveChatChange) {
+          onActiveChatChange(null);
+        }
+        if (inputRef.current) {
+          inputRef.current.focus();
+        }
+        return;
+      }
+
+      // Otherwise, create a new chat entry
       const firstUserMessage = thread.find(m => m.role === 'user')?.content || 'Chat conversation';
       const summary = thread.length > 0 
         ? `${thread.length} message${thread.length > 1 ? 's' : ''} conversation`
@@ -225,6 +269,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
       setShowChatInterface(false);
       setChatMessages([]);
       setInput('');
+      setIsChatMode(false);
       if (inputRef.current) {
         inputRef.current.focus();
       }
@@ -457,6 +502,55 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
         taskData: null,
         viewData: null,
       });
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSubmit(e);
+    }
+    // Shift+Enter allows line breaks (default textarea behavior)
+  };
+
+  // Handle textarea resize directly
+  const adjustTextareaHeight = (textarea: HTMLTextAreaElement, forceFullscreen?: boolean) => {
+    const shouldBeFullscreen = forceFullscreen !== undefined ? forceFullscreen : isFullscreen;
+    
+    if (shouldBeFullscreen) {
+      // In fullscreen, use viewport height minus padding
+      const viewportHeight = window.innerHeight;
+      const formPadding = 32; // p-4 = 16px top + 16px bottom
+      const bottomBarHeight = 60; // Approximate height of bottom bar
+      const maxHeight = viewportHeight - formPadding - bottomBarHeight - 100; // Extra margin
+      textarea.style.height = `${maxHeight}px`;
+      // Always show button when in fullscreen mode
+      setShowFullscreenButton(true);
+    } else {
+      // Reset to auto to get accurate scrollHeight
+      textarea.style.height = 'auto';
+      const scrollHeight = textarea.scrollHeight;
+      const maxHeight = 200; // Max height in pixels (about 8-10 lines)
+      const minHeight = 56; // 3.5rem = 56px (fits buttons with proper spacing)
+      const newHeight = Math.max(minHeight, Math.min(scrollHeight, maxHeight));
+      textarea.style.height = `${newHeight}px`;
+      
+      // Show fullscreen button after 3 lines
+      // line-height is 1.5rem (24px), so 3 lines = 72px + padding (32px) = 104px
+      // But we need to account for the actual scrollHeight which includes padding
+      const lineHeight = 24; // 1.5rem in pixels
+      const padding = 32; // 1rem top + 1rem bottom
+      const threeLinesHeight = (lineHeight * 3) + padding; // 72 + 32 = 104px
+      setShowFullscreenButton(scrollHeight >= threeLinesHeight);
+    }
+    
+    // Remove border-radius from textarea - form container handles it
+    textarea.style.borderRadius = '0';
+    
+    // Update form container radius
+    const formElement = textarea.closest('form');
+    if (formElement) {
+      formElement.style.borderRadius = '32px';
     }
   };
 
@@ -979,24 +1073,6 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
 
   return (
     <>
-      {showChatInterface && currentView === 'entries' && (
-        <ChatInterface
-          onSave={handleChatSave}
-          onCancel={() => {
-            setShowChatInterface(false);
-            setChatMessages([]);
-            setInput('');
-          }}
-          onCollapse={async (thread) => {
-            await handleChatSave(thread);
-          }}
-          onSendMessage={handleSendChatMessage}
-          initialMessage={input.trim() || undefined}
-          messages={chatMessages}
-          isSubmitting={isChatSubmitting}
-        />
-      )}
-      
       <div className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none" data-allow-nav-swipe="true">
       {/* Gradient Fade Background */}
       <div 
@@ -1009,6 +1085,38 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
       
       <div className="relative pb-6 pt-12 pointer-events-auto" data-allow-nav-swipe="true">
         <div className="max-w-2xl mx-auto relative px-3">
+        
+        {/* Chat Interface - positioned above SmartInput */}
+        {showChatInterface && currentView === 'entries' && (
+          <div className="absolute bottom-full left-0 right-0 mb-4 pointer-events-auto">
+            <div className="bg-white rounded-xl border border-gray-200 shadow-lg overflow-hidden">
+              <div className="p-4">
+                <ChatInterface
+                  onSave={handleChatSave}
+                  onCancel={() => {
+                    setShowChatInterface(false);
+                    setChatMessages([]);
+                    setInput('');
+                    setIsChatMode(false);
+                    // Clear the active chat entry ID
+                    if (onActiveChatChange) {
+                      onActiveChatChange(null);
+                    }
+                  }}
+                  onCollapse={async (thread) => {
+                    await handleChatSave(thread);
+                  }}
+                  onSendMessage={handleSendChatMessage}
+                  initialMessage={input.trim() || undefined}
+                  messages={chatMessages}
+                  isSubmitting={isChatSubmitting}
+                  readOnly={false}
+                  hideInput={true}
+                />
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* AI Confirmation Card */}
         {aiResponse && (
@@ -1102,7 +1210,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
         )}
 
         {/* Main Input Bar */}
-        <form onSubmit={handleSubmit} className="relative shadow-lg rounded-full group bg-white/70 backdrop-blur-md border border-white/50 hover:bg-white/80 transition-all">
+        <form onSubmit={handleSubmit} className="relative shadow-lg group bg-white/70 backdrop-blur-md hover:bg-white/80 transition-all overflow-hidden" style={{ borderRadius: '32px' }}>
           {/* Toggle Button - Chat mode for entries, Instant mode for tasks */}
           {currentView === 'entries' ? (
             <>
@@ -1111,12 +1219,13 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
                 type="button"
                 onClick={() => setIsChatMode(!isChatMode)}
                 className={`
-                  absolute left-2 top-2 bottom-2 aspect-square rounded-full flex items-center justify-center transition-all duration-300
+                  absolute left-2 aspect-square rounded-full flex items-center justify-center transition-all duration-300 z-10
                   ${isChatMode 
                     ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' 
                     : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200 hover:text-gray-700'
                   }
                 `}
+                style={{ height: '2.5rem', width: '2.5rem', bottom: '0.5rem' }}
                 title={isChatMode ? "Chat mode: Start a conversation" : "Manual mode: Quick entry"}
               >
                 <HugeiconsIcon icon={isChatMode ? Message01Icon : Pen01Icon} size={20} />
@@ -1129,12 +1238,13 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
               type="button"
               onClick={() => setIsInstantMode(!isInstantMode)}
               className={`
-                absolute left-2 top-2 bottom-2 aspect-square rounded-full flex items-center justify-center transition-all duration-300
+                absolute left-2 aspect-square rounded-full flex items-center justify-center transition-all duration-300 z-10
                 ${isInstantMode 
                   ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' 
                   : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200 hover:text-gray-700'
                 }
               `}
+              style={{ height: '2.5rem', width: '2.5rem', bottom: '0.5rem' }}
               title={isInstantMode ? "Instant entry mode: Skip AI classification" : "Auto mode: AI classifies your input"}
             >
               <div className="relative w-5 h-5 flex items-center justify-center">
@@ -1156,11 +1266,20 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
             </button>
           )}
           
-          <input
+          <textarea
             ref={inputRef}
-            type="text"
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => {
+              setInput(e.target.value);
+              // Adjust height immediately after state update
+              if (e.target instanceof HTMLTextAreaElement) {
+                // Use requestAnimationFrame to ensure DOM has updated
+                requestAnimationFrame(() => {
+                  adjustTextareaHeight(e.target as HTMLTextAreaElement);
+                });
+              }
+            }}
+            onKeyDown={handleKeyDown}
             placeholder={
               currentView === 'entries' && activeChatEntryId 
                 ? "Type your message to continue the conversation..." 
@@ -1169,21 +1288,68 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
                   : getPlaceholderText(currentView === 'entries' ? 'master' : (currentView as 'today' | 'master' | 'routines' | 'timeline' | 'library'))
             }
             disabled={(isProcessing || isAnalyzing || !!aiResponse) || (currentView === 'entries' && showChatInterface && isChatSubmitting)}
-            className={`w-full ${currentView === 'entries' && !isChatMode ? 'pl-14' : 'pl-14'} pr-14 py-4 rounded-full border-none focus:ring-2 focus:ring-blue-500/20 outline-none text-base text-gray-800 placeholder-gray-500 bg-transparent disabled:text-gray-400 transition-all`}
+            className="w-full pl-14 pr-14 border-0 focus:ring-0 focus:outline-none outline-none text-base text-gray-800 placeholder-gray-500 bg-transparent disabled:text-gray-400 transition-all resize-none overflow-y-auto relative z-0 block"
+                style={{
+                  minHeight: '3.5rem', // 56px - proper height for buttons
+                  maxHeight: isFullscreen ? 'none' : '200px',
+                  height: '3.5rem', // Start with proper height
+                  paddingTop: '1rem',
+                  paddingBottom: '1rem',
+                  boxSizing: 'border-box',
+                  lineHeight: '1.5rem',
+                  margin: 0,
+                  borderRadius: '0',
+                  verticalAlign: 'middle'
+                }}
+                ref={(el) => {
+                  inputRef.current = el;
+                  if (el) {
+                    // Initial height adjustment
+                    adjustTextareaHeight(el);
+                  }
+                }}
+            rows={1}
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
             spellCheck="false"
-            inputMode="text"
           />
           
+          {/* Fullscreen toggle button - top right - only show after 3 lines */}
+          <button
+            type="button"
+            onClick={() => {
+              const newFullscreenState = !isFullscreen;
+              setIsFullscreen(newFullscreenState);
+              // Adjust height immediately with the new state
+              if (inputRef.current) {
+                adjustTextareaHeight(inputRef.current, newFullscreenState);
+              }
+            }}
+            className={`absolute right-2 aspect-square rounded-full flex items-center justify-center transition-all duration-300 text-gray-500 hover:text-gray-700 z-10 bg-transparent border-none ${
+              showFullscreenButton 
+                ? 'opacity-100 scale-100 pointer-events-auto' 
+                : 'opacity-0 scale-95 pointer-events-none'
+            }`}
+            style={{ height: '2.5rem', width: '2.5rem', top: '0.5rem' }}
+            title={isFullscreen ? "Exit fullscreen" : "Enter fullscreen"}
+          >
+            {isFullscreen ? (
+              <Minimize2 className="w-5 h-5 transition-transform duration-300" />
+            ) : (
+              <Maximize2 className="w-5 h-5 transition-transform duration-300" />
+            )}
+          </button>
+          
+          {/* Submit button - bottom right */}
           <button
             type="submit"
             disabled={!input.trim() || isProcessing || isAnalyzing || !!aiResponse || (currentView === 'entries' && showChatInterface && isChatSubmitting)}
             className={`
-              absolute right-2 top-2 bottom-2 aspect-square rounded-full flex items-center justify-center transition-all duration-200
+              absolute right-2 aspect-square rounded-full flex items-center justify-center transition-all duration-200 z-10
               ${input.trim() && !isProcessing && !isAnalyzing && !aiResponse && !(currentView === 'entries' && showChatInterface && isChatSubmitting) ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}
             `}
+            style={{ height: '2.5rem', width: '2.5rem', bottom: '0.5rem' }}
           >
             {(isProcessing || isAnalyzing) ? (
                 <Loader2 className="w-5 h-5 animate-spin" />

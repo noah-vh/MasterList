@@ -19,6 +19,7 @@ interface LibraryViewProps {
   onTaskClick?: (taskId: string) => void;
   onToggleTask?: (taskId: string) => void;
   visibleCategories?: string[]; // Categories to show (controlled by FilterBar toggles)
+  searchQuery?: string;
 }
 
 interface SearchCard {
@@ -76,6 +77,7 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onTaskClick,
   onToggleTask,
   visibleCategories = [], // Default: show none
+  searchQuery = '',
 }) => {
   const entries = useQuery(api.entries.list);
   
@@ -214,6 +216,65 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
 
   // Filter items based on active search/filters
   const filteredItems = useMemo(() => {
+    // If we have a text search query, filter by that first
+    if (searchQuery.trim()) {
+      const query = searchQuery.trim().toLowerCase();
+      const searchFilteredTasks = tasks.filter(task => {
+        // Search in task title
+        if (task.title.toLowerCase().includes(query)) return true;
+        // Search in tags
+        if (task.tags.some(tag => tag.toLowerCase().includes(query))) return true;
+        return false;
+      });
+      
+      const searchFilteredEntries = frontendEntries.filter(entry => {
+        // Search in entry content
+        if (entry.content.toLowerCase().includes(query)) return true;
+        // Search in analyzed content
+        if (entry.analyzedContent?.toLowerCase().includes(query)) return true;
+        // Search in classification
+        if (entry.classification?.category?.toLowerCase().includes(query)) return true;
+        if (entry.classification?.topics?.some(topic => topic.toLowerCase().includes(query))) return true;
+        // Search in tags
+        if (entry.tags?.some(tag => tag.toLowerCase().includes(query))) return true;
+        return false;
+      });
+      
+      // Apply additional filters if they exist
+      let finalTasks = searchFilteredTasks;
+      let finalEntries = searchFilteredEntries;
+      
+      if (activeFilters) {
+        finalTasks = searchFilteredTasks.filter(task => {
+          // Tag filter (AND logic - task must have ALL selected tags)
+          if (activeFilters.tags && activeFilters.tags.length > 0) {
+            const matchesTags = activeFilters.tags.every(tag => task.tags.includes(tag));
+            if (!matchesTags) return false;
+          }
+          
+          // Status filter
+          if (activeFilters.status && activeFilters.status.length > 0) {
+            if (!activeFilters.status.includes(task.status)) return false;
+          }
+          
+          return true;
+        });
+        
+        finalEntries = searchFilteredEntries.filter(entry => {
+          // Tag filter (AND logic - entry must have ALL selected tags)
+          if (activeFilters.tags && activeFilters.tags.length > 0) {
+            const matchesTags = activeFilters.tags.every(tag => entry.tags?.includes(tag));
+            if (!matchesTags) return false;
+          }
+          
+          return true;
+        });
+      }
+      
+      return { tasks: finalTasks, entries: finalEntries };
+    }
+    
+    // Otherwise, use existing filter logic
     if (!activeFilters || (!activeFilters.tags?.length && !currentViewName)) {
       return { tasks: [], entries: [] };
     }
@@ -246,9 +307,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     });
 
     return { tasks: filteredTasks, entries: filteredEntries };
-  }, [tasks, frontendEntries, activeFilters, currentViewName]);
+  }, [tasks, frontendEntries, activeFilters, currentViewName, searchQuery]);
 
-  const hasActiveSearch = currentViewName || (activeFilters?.tags && activeFilters.tags.length > 0);
+  const hasActiveSearch = searchQuery.trim() || currentViewName || (activeFilters?.tags && activeFilters.tags.length > 0);
 
   // State for expanded search cards
   const [expandedSearchId, setExpandedSearchId] = useState<string | null>(null);
@@ -258,15 +319,18 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
     if (!hasActiveSearch) return [];
     
     const totalCount = filteredItems.tasks.length + filteredItems.entries.length;
+    const searchName = searchQuery.trim() 
+      ? `"${searchQuery}"` 
+      : currentViewName || 'Search Results';
     return [{
       id: 'current-search',
-      name: currentViewName || 'Search Results',
+      name: searchName,
       count: totalCount,
       tasks: filteredItems.tasks.length,
       entries: filteredItems.entries.length,
       tags: activeFilters?.tags || [],
     }];
-  }, [hasActiveSearch, currentViewName, filteredItems, activeFilters]);
+  }, [hasActiveSearch, currentViewName, filteredItems, activeFilters, searchQuery]);
 
   // Get items for expanded search
   const expandedSearchItems = useMemo(() => {

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, Bell, Menu } from 'lucide-react';
+import { Search, Bell, Menu, Settings } from 'lucide-react';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from './convex/_generated/api';
 import { Id } from './convex/_generated/dataModel';
@@ -13,6 +13,7 @@ import { TimelineView } from './components/TimelineView';
 import { EntriesView } from './components/EntriesView';
 import { LibraryView } from './components/LibraryView';
 import { ErrorBoundary } from './components/ErrorBoundary';
+import { SettingsDialog } from './components/SettingsDialog';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // Helper to convert Convex task to frontend Task type
@@ -95,6 +96,10 @@ const App: React.FC = () => {
   const [showContentEntries, setShowContentEntries] = useState(true);
   const [showTaskNotifications, setShowTaskNotifications] = useState(true);
   const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [isSearchExpanded, setIsSearchExpanded] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const searchInputRef = useRef<HTMLInputElement>(null);
   
   // Swipe navigation state
   const swipeStartX = useRef<number | null>(null);
@@ -181,6 +186,12 @@ const SPRING_TRANSITION = {
         : task.actionDate;
       if (taskDateStr !== todayStr) return false;
       
+      // Apply search query filter (case-insensitive search in task title)
+      if (searchQuery.trim()) {
+        const query = searchQuery.trim().toLowerCase();
+        if (!task.title.toLowerCase().includes(query)) return false;
+      }
+      
       // Apply filter bar filters
       // 1. Status filter
       const matchesStatus = filters.status.length === 0 || filters.status.includes(task.status);
@@ -219,7 +230,7 @@ const SPRING_TRANSITION = {
       return matchesStatus && matchesTags && matchesDate;
     });
     
-    return filtered
+      return filtered
       .sort((a, b) => {
         // Primary: Completed tasks at bottom
         if (a.isCompleted !== b.isCompleted) return a.isCompleted ? 1 : -1;
@@ -237,13 +248,19 @@ const SPRING_TRANSITION = {
         // Tertiary: By createdAt (newest first)
         return b.createdAt - a.createdAt;
       });
-  }, [tasks, filters]);
+  }, [tasks, filters, searchQuery]);
 
   // Routines view filtering - show only routine tasks
   const routinesTasks = useMemo(() => {
     return tasks.filter(task => {
       // Must be a routine task
       if (!task.isRoutine) return false;
+      
+      // Apply search query filter (case-insensitive search in task title)
+      if (searchQuery.trim()) {
+        const query = searchQuery.trim().toLowerCase();
+        if (!task.title.toLowerCase().includes(query)) return false;
+      }
       
       // Apply filter bar filters
       // 1. Status filter
@@ -285,7 +302,7 @@ const SPRING_TRANSITION = {
       const bDate = b.actionDate ? new Date(b.actionDate).getTime() : b.createdAt;
       return bDate - aDate;
     });
-  }, [tasks, filters]);
+  }, [tasks, filters, searchQuery]);
 
   // Filter Logic - Tag-based faceted filtering with AND logic
   const filteredTasks = useMemo(() => {
@@ -299,6 +316,12 @@ const SPRING_TRANSITION = {
         if (showRoutinesFilter && !task.isRoutine) {
           return false;
         }
+      }
+      
+      // Apply search query filter (case-insensitive search in task title)
+      if (searchQuery.trim()) {
+        const query = searchQuery.trim().toLowerCase();
+        if (!task.title.toLowerCase().includes(query)) return false;
       }
       
       // 1. Status filter
@@ -339,7 +362,7 @@ const SPRING_TRANSITION = {
       const bDate = b.actionDate ? new Date(b.actionDate).getTime() : b.createdAt;
       return bDate - aDate;
     });
-  }, [tasks, filters, currentView, showRoutinesFilter]);
+  }, [tasks, filters, currentView, showRoutinesFilter, searchQuery]);
 
   const handleToggleTask = async (id: string) => {
     await toggleTask({ id: id as Id<"tasks"> });
@@ -1096,11 +1119,82 @@ const SPRING_TRANSITION = {
 
               </div>
             </div>
-            <div className="flex items-center gap-4 text-gray-500 flex-shrink-0">
-              <button className="hover:text-gray-900 transition-colors">
-                <Search className="w-6 h-6" />
+            <div className="flex items-center gap-3 text-gray-500 flex-shrink-0 min-w-0">
+              {/* Search - Expandable Icon to Input */}
+              <motion.div
+                className="relative flex items-center"
+                animate={{
+                  width: isSearchExpanded ? 200 : 24,
+                }}
+                transition={SPRING_TRANSITION}
+              >
+                {!isSearchExpanded ? (
+                  <button
+                    onClick={() => {
+                      setIsSearchExpanded(true);
+                      setTimeout(() => searchInputRef.current?.focus(), 50);
+                    }}
+                    className="w-6 h-6 flex items-center justify-center hover:text-gray-900 transition-colors"
+                  >
+                    <Search className="w-6 h-6" />
+                  </button>
+                ) : (
+                  <motion.div
+                    initial={{ opacity: 0, scale: 0.9 }}
+                    animate={{ opacity: 1, scale: 1 }}
+                    exit={{ opacity: 0, scale: 0.9 }}
+                    className="relative w-full flex items-center"
+                  >
+                    <div className="absolute left-3 top-0 bottom-0 flex items-center pointer-events-none z-10">
+                      <Search className="w-4 h-4 text-gray-400" />
+                    </div>
+                    <input
+                      ref={searchInputRef}
+                      type="text"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onBlur={() => {
+                        // Only collapse if there's no search query
+                        if (!searchQuery.trim()) {
+                          setIsSearchExpanded(false);
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (e.key === 'Escape') {
+                          setSearchQuery('');
+                          setIsSearchExpanded(false);
+                          searchInputRef.current?.blur();
+                        }
+                      }}
+                      placeholder={
+                        currentView === 'entries' ? 'Search entries...' :
+                        currentView === 'library' ? 'Search library...' :
+                        'Search tasks...'
+                      }
+                      className="w-full pl-10 pr-9 py-2 text-sm bg-gray-50/80 backdrop-blur-sm border border-gray-200 rounded-full focus:outline-none focus:border-blue-300 focus:ring-2 focus:ring-blue-100 transition-all placeholder:text-gray-400"
+                    />
+                    {searchQuery && (
+                      <button
+                        onClick={() => {
+                          setSearchQuery('');
+                          searchInputRef.current?.focus();
+                        }}
+                        className="absolute right-2.5 top-0 bottom-0 flex items-center justify-center text-gray-400 hover:text-gray-600 transition-colors rounded-full hover:bg-gray-200"
+                      >
+                        <span className="text-sm leading-none">×</span>
+                      </button>
+                    )}
+                  </motion.div>
+                )}
+              </motion.div>
+              <button 
+                onClick={() => setSettingsOpen(true)}
+                className="hover:text-gray-900 transition-colors relative flex-shrink-0"
+                title="Settings"
+              >
+                <Settings className="w-6 h-6" />
               </button>
-              <button className="hover:text-gray-900 transition-colors relative">
+              <button className="hover:text-gray-900 transition-colors relative flex-shrink-0">
                 <Bell className="w-6 h-6" />
                 <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 border-2 border-[#F3F4F6] rounded-full"></span>
               </button>
@@ -1193,6 +1287,7 @@ const SPRING_TRANSITION = {
                 onTaskClick={handleTaskClick}
                 onToggleTask={handleToggleTask}
                 scrollRef={libraryScrollRef}
+                searchQuery={currentView === 'library' ? searchQuery : ''}
               />
             </ErrorBoundary>
           </div>
@@ -1208,6 +1303,7 @@ const SPRING_TRANSITION = {
                 showTaskNotifications={showTaskNotifications}
                 activeChatEntryId={activeChatEntryId}
                 onActiveChatChange={setActiveChatEntryId}
+                searchQuery={currentView === 'entries' ? searchQuery : ''}
               />
             </ErrorBoundary>
           </div>
@@ -1312,6 +1408,7 @@ const SPRING_TRANSITION = {
         defaultToRoutine={currentView === 'routines'}
         currentView={currentView}
         activeChatEntryId={currentView === 'entries' ? activeChatEntryId : null}
+        onActiveChatChange={currentView === 'entries' ? setActiveChatEntryId : undefined}
       />
 
       {/* Detail Modal */}
@@ -1323,6 +1420,12 @@ const SPRING_TRANSITION = {
           onDelete={handleDeleteTask}
         />
       )}
+
+      {/* Settings Dialog */}
+      <SettingsDialog 
+        open={settingsOpen} 
+        onOpenChange={setSettingsOpen} 
+      />
       
     </div>
   );

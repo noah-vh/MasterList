@@ -14,6 +14,7 @@ interface EntriesViewProps {
   showTaskNotifications?: boolean;
   activeChatEntryId?: string | null;
   onActiveChatChange?: (entryId: string | null) => void;
+  searchQuery?: string;
 }
 
 // Helper to convert Convex entry to frontend Entry type
@@ -86,6 +87,7 @@ export const EntriesView: React.FC<EntriesViewProps> = ({
   showTaskNotifications = true,
   activeChatEntryId,
   onActiveChatChange,
+  searchQuery = '',
 }) => {
   // All hooks must be called at the top, before any conditional returns
   const entries = useQuery(api.entries.list);
@@ -96,12 +98,12 @@ export const EntriesView: React.FC<EntriesViewProps> = ({
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null);
   const [draftContent, setDraftContent] = useState('');
   
-  // Convert Convex entries to frontend Entry type and filter by visibility toggles
+  // Convert Convex entries to frontend Entry type and filter by visibility toggles and search
   const frontendEntries = useMemo(() => {
     if (!entries || !Array.isArray(entries)) return [];
     const allEntries = entries.map(convexEntryToEntry);
     
-    // Filter entries based on visibility toggles
+    // Filter entries based on visibility toggles and search query
     return allEntries.filter(entry => {
       // Filter content entries
       if (entry.entryType === 'content' && !showContentEntries) {
@@ -111,10 +113,25 @@ export const EntriesView: React.FC<EntriesViewProps> = ({
       if (entry.entryType === 'activity' && !showTaskNotifications) {
         return false;
       }
-      // Always show manual entries
+      
+      // Apply search query filter (case-insensitive search in entry content)
+      if (searchQuery.trim()) {
+        const query = searchQuery.trim().toLowerCase();
+        const contentMatch = entry.content.toLowerCase().includes(query);
+        const analyzedContentMatch = entry.analyzedContent?.toLowerCase().includes(query) || false;
+        const classificationMatch = entry.classification?.category?.toLowerCase().includes(query) ||
+          entry.classification?.topics?.some(topic => topic.toLowerCase().includes(query)) ||
+          entry.classification?.keyPoints?.some(point => point.toLowerCase().includes(query)) || false;
+        
+        if (!contentMatch && !analyzedContentMatch && !classificationMatch) {
+          return false;
+        }
+      }
+      
+      // Always show manual entries (if they pass search)
       return true;
     });
-  }, [entries, showContentEntries, showTaskNotifications]);
+  }, [entries, showContentEntries, showTaskNotifications, searchQuery]);
 
   // Group entries by date (must be before conditional return)
   const groupedEntries = useMemo(() => {
