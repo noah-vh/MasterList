@@ -171,6 +171,30 @@ export const createChatEntry = mutation({
   },
 });
 
+// Mutation: Update chat entry thread
+export const updateChatEntry = mutation({
+  args: {
+    id: v.id("entries"),
+    chatThread: v.array(v.object({
+      role: v.union(v.literal("user"), v.literal("assistant")),
+      content: v.string(),
+      timestamp: v.number(),
+    })),
+    content: v.optional(v.string()), // Optional updated summary
+  },
+  handler: async (ctx, args) => {
+    const updateData: any = {
+      chatThread: args.chatThread,
+      updatedAt: Date.now(),
+    };
+    if (args.content) {
+      updateData.content = args.content;
+    }
+    await ctx.db.patch(args.id, updateData);
+    return args.id;
+  },
+});
+
 // Mutation: Create content log entry (analyzed content)
 export const createContentEntry = mutation({
   args: {

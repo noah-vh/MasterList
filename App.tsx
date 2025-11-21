@@ -22,6 +22,7 @@ const convexTaskToTask = (convexTask: any): Task => {
     title: convexTask.title,
     isCompleted: convexTask.isCompleted,
     status: convexTask.status,
+    priority: convexTask.priority,
     createdAt: convexTask.createdAt,
     actionDate: convexTask.actionDate,
     tags: convexTask.tags,
@@ -77,6 +78,7 @@ const App: React.FC = () => {
   const toggleTask = useMutation(api.tasks.toggleComplete);
   const deleteTask = useMutation(api.tasks.deleteTask);
   const createWithSubtasks = useMutation(api.tasks.createWithSubtasks);
+  const createEntry = useMutation(api.entries.create);
 
   const [filters, setFilters] = useState<FilterState>({
     tags: [],
@@ -86,9 +88,13 @@ const App: React.FC = () => {
   const [currentViewName, setCurrentViewName] = useState<string | undefined>(undefined);
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [currentView, setCurrentView] = useState<'library' | 'entries' | 'today' | 'master' | 'routines' | 'timeline'>('entries');
+  const [previousView, setPreviousView] = useState<'library' | 'entries' | 'today' | 'master' | 'routines' | 'timeline' | null>(null);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string | null>(null);
   const [showRoutinesFilter, setShowRoutinesFilter] = useState(false);
   const [visibleCategories, setVisibleCategories] = useState<string[]>([]);
+  const [showContentEntries, setShowContentEntries] = useState(true);
+  const [showTaskNotifications, setShowTaskNotifications] = useState(true);
+  const [activeChatEntryId, setActiveChatEntryId] = useState<string | null>(null);
   
   // Swipe navigation state
   const swipeStartX = useRef<number | null>(null);
@@ -129,6 +135,29 @@ const SPRING_TRANSITION = {
   stiffness: 350,
   damping: 25,
   mass: 0.5,
+};
+
+  // Helper to get view order for animation direction
+  const getViewOrder = (view: typeof currentView): number => {
+    const order: Record<typeof view, number> = {
+      library: 0,
+      entries: 1,
+      today: 2,
+      master: 3,
+      routines: 4,
+      timeline: 5,
+    };
+    return order[view];
+  };
+
+  // Helper to get x offset for inactive tabs based on direction
+  const getInactiveXOffset = (view: typeof currentView): number => {
+    if (currentView === view) return 0;
+    const currentOrder = getViewOrder(currentView);
+    const viewOrder = getViewOrder(view);
+    // If view is after current (forward), offset to the right
+    // If view is before current (backward), offset to the left
+    return viewOrder > currentOrder ? 15 : -15;
 };
 
   // Helper to check if date is today
@@ -327,6 +356,7 @@ const SPRING_TRANSITION = {
         status: (data.status || TaskStatus.Active) as TaskStatus,
         tags: Array.isArray(data.tags) ? data.tags : [],
         actionDate: data.actionDate || undefined,
+        priority: data.priority || undefined,
         createdAt: Date.now(),
         timeEstimate: data.timeEstimate || undefined,
         context: data.context || undefined,
@@ -403,6 +433,7 @@ const SPRING_TRANSITION = {
       title: updatedTask.title,
       isCompleted: updatedTask.isCompleted,
       status: updatedTask.status,
+      priority: updatedTask.priority,
       actionDate: updatedTask.actionDate,
       tags: updatedTask.tags,
       timeEstimate: updatedTask.timeEstimate,
@@ -448,31 +479,41 @@ const SPRING_TRANSITION = {
     const threshold = 150;
     
     // Swipe navigation for 6 views: Library -> Entries -> Today -> Master -> Routines -> Timeline
-    // Swipe right: Library -> Entries -> Today -> Master -> Routines -> Timeline
-    if (deltaX > threshold && Math.abs(deltaX) > Math.abs(deltaY)) {
+    // Swipe left (finger moves left): Library -> Entries -> Today -> Master -> Routines -> Timeline
+    if (deltaX < -threshold && Math.abs(deltaX) > Math.abs(deltaY)) {
       if (currentView === 'library') {
+        setPreviousView(currentView);
         setCurrentView('entries');
       } else if (currentView === 'entries') {
+        setPreviousView(currentView);
         setCurrentView('today');
       } else if (currentView === 'today') {
+        setPreviousView(currentView);
         setCurrentView('master');
       } else if (currentView === 'master') {
+        setPreviousView(currentView);
         setCurrentView('routines');
       } else if (currentView === 'routines') {
+        setPreviousView(currentView);
         setCurrentView('timeline');
       }
     }
-    // Swipe left: Timeline -> Routines -> Master -> Today -> Entries -> Library
-    else if (deltaX < -threshold && Math.abs(deltaX) > Math.abs(deltaY)) {
+    // Swipe right (finger moves right): Timeline -> Routines -> Master -> Today -> Entries -> Library
+    else if (deltaX > threshold && Math.abs(deltaX) > Math.abs(deltaY)) {
       if (currentView === 'timeline') {
+        setPreviousView(currentView);
         setCurrentView('routines');
       } else if (currentView === 'routines') {
+        setPreviousView(currentView);
         setCurrentView('master');
       } else if (currentView === 'master') {
+        setPreviousView(currentView);
         setCurrentView('today');
       } else if (currentView === 'today') {
+        setPreviousView(currentView);
         setCurrentView('entries');
       } else if (currentView === 'entries') {
+        setPreviousView(currentView);
         setCurrentView('library');
       }
     }
@@ -482,11 +523,33 @@ const SPRING_TRANSITION = {
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    // Always allow navigation swipe on SmartInput
+    if (target.closest('[data-allow-nav-swipe="true"]')) {
+      const touch = e.touches[0];
+      startNavSwipe(touch.clientX, touch.clientY);
+      return;
+    }
+    // Don't start navigation swipe if touch is on a swipeable element
+    if (target.closest('[data-swipeable="true"]')) return;
+    
     const touch = e.touches[0];
     startNavSwipe(touch.clientX, touch.clientY);
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    // Always allow navigation swipe on SmartInput
+    if (target.closest('[data-allow-nav-swipe="true"]')) {
+      const touch = e.touches[0];
+      if (updateNavSwipe(touch.clientX, touch.clientY)) {
+        e.preventDefault(); // Prevent scrolling during horizontal swipe
+      }
+      return;
+    }
+    // Don't handle navigation swipe if touch is on a swipeable element
+    if (target.closest('[data-swipeable="true"]')) return;
+    
     const touch = e.touches[0];
     if (updateNavSwipe(touch.clientX, touch.clientY)) {
       e.preventDefault(); // Prevent scrolling during horizontal swipe
@@ -494,6 +557,16 @@ const SPRING_TRANSITION = {
   };
 
   const handleTouchEnd = (e: React.TouchEvent) => {
+    const target = e.target as HTMLElement;
+    // Always allow navigation swipe on SmartInput
+    if (target.closest('[data-allow-nav-swipe="true"]')) {
+      const touch = e.changedTouches[0];
+      endNavSwipe(touch.clientX, touch.clientY);
+      return;
+    }
+    // Don't handle navigation swipe if touch is on a swipeable element
+    if (target.closest('[data-swipeable="true"]')) return;
+    
     const touch = e.changedTouches[0];
     endNavSwipe(touch.clientX, touch.clientY);
   };
@@ -504,16 +577,37 @@ const SPRING_TRANSITION = {
     const target = e.target as HTMLElement;
     if (target.closest('button, a, input, textarea, select')) return;
     
+    // Always allow navigation swipe on SmartInput
+    const isOnSmartInput = target.closest('[data-allow-nav-swipe="true"]');
+    // Don't start navigation swipe if touch is on a swipeable element (entry card, task card)
+    if (!isOnSmartInput && target.closest('[data-swipeable="true"]')) return;
+    
     startNavSwipe(e.clientX, e.clientY);
     
     // Add global mouse listeners for drag
     const handleGlobalMouseMove = (e: MouseEvent) => {
+      const moveTarget = e.target as HTMLElement;
+      // Always allow navigation swipe on SmartInput
+      const isOnSmartInputMove = moveTarget.closest('[data-allow-nav-swipe="true"]');
+      // Don't handle navigation swipe if mouse is over a swipeable element
+      if (!isOnSmartInputMove && moveTarget.closest('[data-swipeable="true"]')) {
+        return;
+      }
       if (updateNavSwipe(e.clientX, e.clientY)) {
         e.preventDefault();
       }
     };
     
     const handleGlobalMouseUp = (e: MouseEvent) => {
+      const upTarget = e.target as HTMLElement;
+      // Always allow navigation swipe on SmartInput
+      const isOnSmartInputUp = upTarget.closest('[data-allow-nav-swipe="true"]');
+      // Don't handle navigation swipe if mouse is over a swipeable element
+      if (!isOnSmartInputUp && upTarget.closest('[data-swipeable="true"]')) {
+        document.removeEventListener('mousemove', handleGlobalMouseMove);
+        document.removeEventListener('mouseup', handleGlobalMouseUp);
+        return;
+      }
       endNavSwipe(e.clientX, e.clientY);
       document.removeEventListener('mousemove', handleGlobalMouseMove);
       document.removeEventListener('mouseup', handleGlobalMouseUp);
@@ -671,7 +765,10 @@ const SPRING_TRANSITION = {
                 {/* Library Section */}
                 <motion.div 
                   className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full"
-                  onClick={() => setCurrentView('library')}
+                  onClick={() => {
+                    setPreviousView(currentView);
+                    setCurrentView('library');
+                  }}
                   animate={{ 
                     width: currentView === 'library' ? 'auto' : '6px',
                   }}
@@ -691,7 +788,7 @@ const SPRING_TRANSITION = {
                       animate={{ 
                         opacity: currentView === 'library' ? 1 : 0,
                         scaleX: currentView === 'library' ? 1 : 0,
-                        x: currentView === 'library' ? 0 : -15 
+                        x: currentView === 'library' ? 0 : getInactiveXOffset('library')
                       }}
                       transition={SPRING_TRANSITION}
                       className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
@@ -717,7 +814,10 @@ const SPRING_TRANSITION = {
                 {/* Entries Section */}
                 <motion.div 
                   className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full"
-                  onClick={() => setCurrentView('entries')}
+                  onClick={() => {
+                    setPreviousView(currentView);
+                    setCurrentView('entries');
+                  }}
                   animate={{ 
                     width: currentView === 'entries' ? 'auto' : '6px',
                   }}
@@ -737,7 +837,7 @@ const SPRING_TRANSITION = {
                       animate={{ 
                         opacity: currentView === 'entries' ? 1 : 0,
                         scaleX: currentView === 'entries' ? 1 : 0,
-                        x: currentView === 'entries' ? 0 : -15 
+                        x: currentView === 'entries' ? 0 : getInactiveXOffset('entries')
                       }}
                       transition={SPRING_TRANSITION}
                       className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
@@ -763,7 +863,10 @@ const SPRING_TRANSITION = {
                 {/* Today Section */}
                 <motion.div 
                   className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full" // Center content vertically
-                  onClick={() => setCurrentView('today')}
+                  onClick={() => {
+                    setPreviousView(currentView);
+                    setCurrentView('today');
+                  }}
                   animate={{ 
                     width: currentView === 'today' ? 'auto' : '6px',
                   }}
@@ -786,7 +889,7 @@ const SPRING_TRANSITION = {
                       animate={{ 
                         opacity: currentView === 'today' ? 1 : 0,
                         scaleX: currentView === 'today' ? 1 : 0,
-                        x: currentView === 'today' ? 0 : -15 
+                        x: currentView === 'today' ? 0 : getInactiveXOffset('today')
                       }}
                       transition={SPRING_TRANSITION}
                       className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
@@ -821,7 +924,10 @@ const SPRING_TRANSITION = {
                 {/* Master Section */}
                 <motion.div 
                   className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full" // Center content vertically
-                  onClick={() => setCurrentView('master')}
+                  onClick={() => {
+                    setPreviousView(currentView);
+                    setCurrentView('master');
+                  }}
                   animate={{ 
                     width: currentView === 'master' ? 'auto' : '6px',
                   }}
@@ -844,7 +950,7 @@ const SPRING_TRANSITION = {
                       animate={{ 
                         opacity: currentView === 'master' ? 1 : 0,
                         scaleX: currentView === 'master' ? 1 : 0,
-                        x: currentView === 'master' ? 0 : -15 
+                        x: currentView === 'master' ? 0 : getInactiveXOffset('master')
                       }}
                       transition={SPRING_TRANSITION}
                       className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
@@ -882,7 +988,10 @@ const SPRING_TRANSITION = {
                 {/* Routines Section */}
                 <motion.div 
                   className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full"
-                  onClick={() => setCurrentView('routines')}
+                  onClick={() => {
+                    setPreviousView(currentView);
+                    setCurrentView('routines');
+                  }}
                   animate={{ 
                     width: currentView === 'routines' ? 'auto' : '6px',
                   }}
@@ -902,7 +1011,7 @@ const SPRING_TRANSITION = {
                       animate={{ 
                         opacity: currentView === 'routines' ? 1 : 0,
                         scaleX: currentView === 'routines' ? 1 : 0,
-                        x: currentView === 'routines' ? 0 : -15 
+                        x: currentView === 'routines' ? 0 : getInactiveXOffset('routines')
                       }}
                       transition={SPRING_TRANSITION}
                       className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
@@ -935,7 +1044,10 @@ const SPRING_TRANSITION = {
                 {/* Timeline Section */}
                 <motion.div 
                   className="flex flex-col items-start cursor-pointer group select-none relative justify-center h-full"
-                  onClick={() => setCurrentView('timeline')}
+                  onClick={() => {
+                    setPreviousView(currentView);
+                    setCurrentView('timeline');
+                  }}
                   animate={{ 
                     width: currentView === 'timeline' ? 'auto' : '6px',
                   }}
@@ -955,7 +1067,7 @@ const SPRING_TRANSITION = {
                       animate={{ 
                         opacity: currentView === 'timeline' ? 1 : 0,
                         scaleX: currentView === 'timeline' ? 1 : 0,
-                        x: currentView === 'timeline' ? 0 : -15 
+                        x: currentView === 'timeline' ? 0 : getInactiveXOffset('timeline')
                       }}
                       transition={SPRING_TRANSITION}
                       className="text-2xl font-bold text-gray-900 tracking-tight whitespace-nowrap leading-none origin-left"
@@ -1016,6 +1128,10 @@ const SPRING_TRANSITION = {
                     : prev.filter(c => c !== category)
                 );
               }}
+              showContentEntries={showContentEntries}
+              onToggleContentEntries={setShowContentEntries}
+              showTaskNotifications={showTaskNotifications}
+              onToggleTaskNotifications={setShowTaskNotifications}
             />
           </div>
         </div>
@@ -1088,6 +1204,10 @@ const SPRING_TRANSITION = {
                 tasks={tasks}
                 onTaskClick={handleTaskClick}
                 scrollRef={entriesScrollRef}
+                showContentEntries={showContentEntries}
+                showTaskNotifications={showTaskNotifications}
+                activeChatEntryId={activeChatEntryId}
+                onActiveChatChange={setActiveChatEntryId}
               />
             </ErrorBoundary>
           </div>
@@ -1102,6 +1222,7 @@ const SPRING_TRANSITION = {
                     task={task} 
                     onToggle={handleToggleTask} 
                     onClick={handleTaskClick}
+                    onDelete={handleDeleteTask}
                   />
                 ))
               ) : (
@@ -1128,6 +1249,7 @@ const SPRING_TRANSITION = {
                     task={task} 
                     onToggle={handleToggleTask} 
                     onClick={handleTaskClick}
+                    onDelete={handleDeleteTask}
                   />
                 ))
               ) : (
@@ -1156,6 +1278,7 @@ const SPRING_TRANSITION = {
                     task={task} 
                     onToggle={handleToggleTask} 
                     onClick={handleTaskClick}
+                    onDelete={handleDeleteTask}
                   />
                 ))
               ) : (
@@ -1179,12 +1302,16 @@ const SPRING_TRANSITION = {
         </motion.div>
       </div>
 
-      {/* Smart Input */}
+      {/* Smart Input - contextual to each page */}
       <SmartInput 
         onAddTask={handleAddTask} 
         onApplyView={handleApplyView}
+        onAddEntry={currentView === 'entries' ? async (content: string) => {
+          await createEntry({ content });
+        } : undefined}
         defaultToRoutine={currentView === 'routines'}
         currentView={currentView}
+        activeChatEntryId={currentView === 'entries' ? activeChatEntryId : null}
       />
 
       {/* Detail Modal */}

@@ -3,7 +3,6 @@ import { useQuery, useMutation } from 'convex/react';
 import { api } from '../convex/_generated/api';
 import { Entry, Task } from '../types';
 import { EntryCard } from './EntryCard';
-import { EntrySmartInput } from './EntrySmartInput';
 import { Id } from '../convex/_generated/dataModel';
 import { Menu } from 'lucide-react';
 
@@ -11,6 +10,10 @@ interface EntriesViewProps {
   tasks: Task[];
   onTaskClick?: (taskId: string) => void;
   scrollRef?: React.RefObject<HTMLDivElement>;
+  showContentEntries?: boolean;
+  showTaskNotifications?: boolean;
+  activeChatEntryId?: string | null;
+  onActiveChatChange?: (entryId: string | null) => void;
 }
 
 // Helper to convert Convex entry to frontend Entry type
@@ -78,7 +81,11 @@ const groupEntriesByDate = (entries: Entry[]): Map<string, Entry[]> => {
 export const EntriesView: React.FC<EntriesViewProps> = ({ 
   tasks, 
   onTaskClick,
-  scrollRef 
+  scrollRef,
+  showContentEntries = true,
+  showTaskNotifications = true,
+  activeChatEntryId,
+  onActiveChatChange,
 }) => {
   // All hooks must be called at the top, before any conditional returns
   const entries = useQuery(api.entries.list);
@@ -89,11 +96,25 @@ export const EntriesView: React.FC<EntriesViewProps> = ({
   const [editingEntry, setEditingEntry] = useState<Entry | null>(null);
   const [draftContent, setDraftContent] = useState('');
   
-  // Convert Convex entries to frontend Entry type (must be before conditional return)
+  // Convert Convex entries to frontend Entry type and filter by visibility toggles
   const frontendEntries = useMemo(() => {
     if (!entries || !Array.isArray(entries)) return [];
-    return entries.map(convexEntryToEntry);
-  }, [entries]);
+    const allEntries = entries.map(convexEntryToEntry);
+    
+    // Filter entries based on visibility toggles
+    return allEntries.filter(entry => {
+      // Filter content entries
+      if (entry.entryType === 'content' && !showContentEntries) {
+        return false;
+      }
+      // Filter task notifications (activity entries)
+      if (entry.entryType === 'activity' && !showTaskNotifications) {
+        return false;
+      }
+      // Always show manual entries
+      return true;
+    });
+  }, [entries, showContentEntries, showTaskNotifications]);
 
   // Group entries by date (must be before conditional return)
   const groupedEntries = useMemo(() => {
@@ -103,7 +124,7 @@ export const EntriesView: React.FC<EntriesViewProps> = ({
   // Sort date groups - chronological order (oldest first, newest last)
   // Today and Yesterday should be at the end
   const sortedDateKeys = useMemo(() => {
-    const keys = Array.from(groupedEntries.keys());
+    const keys = Array.from(groupedEntries.keys()) as string[];
     const todayKey = keys.find(k => k === 'Today');
     const yesterdayKey = keys.find(k => k === 'Yesterday');
     const otherKeys = keys.filter(k => k !== 'Today' && k !== 'Yesterday');
@@ -111,11 +132,11 @@ export const EntriesView: React.FC<EntriesViewProps> = ({
     // Sort other keys chronologically (parse dates)
     const sortedOtherKeys = otherKeys.sort((a, b) => {
       try {
-        const dateA = new Date(a);
-        const dateB = new Date(b);
+        const dateA = new Date(a as string);
+        const dateB = new Date(b as string);
         return dateA.getTime() - dateB.getTime(); // Oldest first
       } catch {
-        return a.localeCompare(b);
+        return (a as string).localeCompare(b as string);
       }
     });
     
@@ -292,10 +313,16 @@ export const EntriesView: React.FC<EntriesViewProps> = ({
                               taskTitle={entry.linkedTaskId ? getTaskTitle(entry.linkedTaskId) : undefined}
                               onTaskClick={handleTaskClick}
                               onEdit={entry.entryType === 'manual' ? handleEdit : undefined}
-                              onDelete={entry.entryType === 'manual' ? handleDelete : undefined}
+                              onDelete={handleDelete}
                               onContentUpdate={entry.entryType === 'content' ? handleContentEntryUpdate : undefined}
                               showTimestamp={showTimestamp}
                               isFirstInGroup={isFirstEntry}
+                              isChatActive={activeChatEntryId === entry.id}
+                              onChatActiveChange={(isActive) => {
+                                if (onActiveChatChange) {
+                                  onActiveChatChange(isActive ? entry.id : null);
+                                }
+                              }}
                             />
                           )}
                         </div>
@@ -319,11 +346,6 @@ export const EntriesView: React.FC<EntriesViewProps> = ({
         )}
       </div>
 
-      {/* Smart Input at bottom */}
-      <EntrySmartInput
-        onSubmit={handleSubmit}
-        placeholder="Add an entry or share your thoughts..."
-      />
     </div>
   );
 };

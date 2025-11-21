@@ -14,7 +14,7 @@ interface FilterBarProps {
   setFilters: React.Dispatch<React.SetStateAction<FilterState>>;
   currentViewName?: string;
   onClearView: () => void;
-  currentView?: 'today' | 'master' | 'routines' | 'timeline' | 'library';
+  currentView?: 'today' | 'master' | 'routines' | 'timeline' | 'library' | 'entries';
   showRoutinesFilter?: boolean;
   onToggleRoutinesFilter?: (show: boolean) => void;
   templates?: TimeBlockTemplate[];
@@ -22,6 +22,10 @@ interface FilterBarProps {
   onSelectTemplate?: (templateId: string | null) => void;
   visibleCategories?: string[];
   onToggleCategory?: (category: string, visible: boolean) => void;
+  showContentEntries?: boolean;
+  onToggleContentEntries?: (show: boolean) => void;
+  showTaskNotifications?: boolean;
+  onToggleTaskNotifications?: (show: boolean) => void;
 }
 
 export const FilterBar: React.FC<FilterBarProps> = ({ 
@@ -37,6 +41,10 @@ export const FilterBar: React.FC<FilterBarProps> = ({
   onSelectTemplate,
   visibleCategories = [],
   onToggleCategory,
+  showContentEntries = true,
+  onToggleContentEntries,
+  showTaskNotifications = true,
+  onToggleTaskNotifications,
 }) => {
   const createTemplate = useMutation(api.timeBlocks.createTemplate);
   const [isCreatingTemplate, setIsCreatingTemplate] = useState(false);
@@ -384,106 +392,136 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                 }}
               >
               
+              {/* Entries View Toggles */}
+              {currentView === 'entries' && (
+                <>
+                  {onToggleContentEntries && (
+                    <button
+                      type="button"
+                      onClick={() => onToggleContentEntries(!showContentEntries)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60`}
+                    >
+                      <span>Content</span>
+                      {showContentEntries && (
+                        <div className="w-4 h-4 rounded-full border border-blue-400 flex items-center justify-center">
+                          <Check className="w-3 h-3 text-blue-500" />
+                        </div>
+                      )}
+                    </button>
+                  )}
+                  {onToggleTaskNotifications && (
+                    <button
+                      type="button"
+                      onClick={() => onToggleTaskNotifications(!showTaskNotifications)}
+                      className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60`}
+                    >
+                      <span>Tasks</span>
+                      {showTaskNotifications && (
+                        <div className="w-4 h-4 rounded-full border border-blue-400 flex items-center justify-center">
+                          <Check className="w-3 h-3 text-blue-500" />
+                        </div>
+                      )}
+                    </button>
+                  )}
+                </>
+              )}
+
               {/* Routines Filter Toggle (Master view only) */}
               {currentView === 'master' && onToggleRoutinesFilter && (
                 <button
                   type="button"
                   onClick={() => onToggleRoutinesFilter(!showRoutinesFilter)}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 ${
-                    showRoutinesFilter
-                      ? 'bg-gray-900 text-white border-gray-900'
-                      : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
-                  }`}
+                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60`}
                 >
                   <span>Routines</span>
-                  {showRoutinesFilter && <Check className="w-3.5 h-3.5" />}
+                  {showRoutinesFilter && (
+                    <div className="w-4 h-4 rounded-full border border-blue-400 flex items-center justify-center">
+                      <Check className="w-3 h-3 text-blue-500" />
+                    </div>
+                  )}
                 </button>
               )}
 
-              {/* Date/Time Filter - Dropdown */}
-              <div className="relative flex-shrink-0">
-                <button
-                  ref={dateButtonRef}
-                  type="button"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    toggleMenu('date');
-                  }}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 ${
-                    openMenu === 'date'
-                      ? 'bg-gray-900 text-white border-gray-900'
-                      : isDateActive
-                        ? 'bg-gray-900 text-white border-gray-900'
-                        : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
-                  }`}
-                >
-                  <Calendar className={`w-3.5 h-3.5 ${!isDateActive && openMenu !== 'date' ? 'text-gray-400' : ''}`} />
-                  <span>{currentDateValue}</span>
-                  <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${openMenu === 'date' ? 'rotate-180' : ''}`} />
-                </button>
+              {/* Date/Time Filter - Dropdown - Hidden on entries view */}
+              {currentView !== 'entries' && (
+                <div className="relative flex-shrink-0">
+                  <button
+                    ref={dateButtonRef}
+                    type="button"
+                    onClick={(e) => {
+                      e.preventDefault();
+                      e.stopPropagation();
+                      toggleMenu('date');
+                    }}
+                    className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60`}
+                  >
+                    <Calendar className={`w-3.5 h-3.5 ${!isDateActive && openMenu !== 'date' ? 'text-gray-400' : ''}`} />
+                    <span>{currentDateValue}</span>
+                    <ChevronDown className={`w-3.5 h-3.5 opacity-50 transition-transform duration-200 ${openMenu === 'date' ? 'rotate-180' : ''}`} />
+                  </button>
 
-                {renderDropdownPortal(
-                  <AnimatePresence>
-                    {openMenu === 'date' && (
-                      <motion.div 
-                        initial={{ opacity: 0, y: -10, scale: 0.95 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: -10, scale: 0.95 }}
-                        transition={{ duration: 0.2, ease: "easeOut" }}
-                        className="w-48 bg-white/80 backdrop-blur-xl rounded-xl shadow-xl border border-white/40 overflow-hidden origin-top-left"
-                        onClick={(e) => e.stopPropagation()}
-                      >
-                        <div className="p-1">
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDateSelect('All');
-                            }} 
-                            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
-                          >
-                            <span>All Time</span>
-                            {activeFilters.dateScope === 'All' && <Check className="w-4 h-4 text-blue-600" />}
-                          </button>
-                          <div className="h-px bg-gray-100 my-1"></div>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDateSelect('Today');
-                            }} 
-                            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
-                          >
-                            <span>Today</span>
-                            {activeFilters.dateScope === 'Today' && <Check className="w-4 h-4 text-blue-600" />}
-                          </button>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDateSelect('ThisWeek');
-                            }} 
-                            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
-                          >
-                            <span>This Week</span>
-                            {activeFilters.dateScope === 'ThisWeek' && <Check className="w-4 h-4 text-blue-600" />}
-                          </button>
-                          <button 
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDateSelect('Overdue');
-                            }} 
-                            className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
-                          >
-                            <span>Overdue</span>
-                            {activeFilters.dateScope === 'Overdue' && <Check className="w-4 h-4 text-blue-600" />}
-                          </button>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>,
-                  dateButtonRef,
-                  openMenu === 'date'
-                )}
-              </div>
+                  {renderDropdownPortal(
+                    <AnimatePresence>
+                      {openMenu === 'date' && (
+                        <motion.div 
+                          initial={{ opacity: 0, y: -10, scale: 0.95 }}
+                          animate={{ opacity: 1, y: 0, scale: 1 }}
+                          exit={{ opacity: 0, y: -10, scale: 0.95 }}
+                          transition={{ duration: 0.2, ease: "easeOut" }}
+                          className="w-48 bg-white/80 backdrop-blur-xl rounded-xl shadow-xl border border-white/40 overflow-hidden origin-top-left"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+                          <div className="p-1">
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDateSelect('All');
+                              }} 
+                              className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
+                            >
+                              <span>All Time</span>
+                              {activeFilters.dateScope === 'All' && <Check className="w-4 h-4 text-blue-600" />}
+                            </button>
+                            <div className="h-px bg-gray-100 my-1"></div>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDateSelect('Today');
+                              }} 
+                              className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
+                            >
+                              <span>Today</span>
+                              {activeFilters.dateScope === 'Today' && <Check className="w-4 h-4 text-blue-600" />}
+                            </button>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDateSelect('ThisWeek');
+                              }} 
+                              className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
+                            >
+                              <span>This Week</span>
+                              {activeFilters.dateScope === 'ThisWeek' && <Check className="w-4 h-4 text-blue-600" />}
+                            </button>
+                            <button 
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                handleDateSelect('Overdue');
+                              }} 
+                              className="w-full text-left px-3 py-2 rounded-lg text-sm font-medium text-gray-600 hover:bg-gray-50 hover:text-gray-900 flex items-center justify-between transition-colors"
+                            >
+                              <span>Overdue</span>
+                              {activeFilters.dateScope === 'Overdue' && <Check className="w-4 h-4 text-blue-600" />}
+                            </button>
+                          </div>
+                        </motion.div>
+                      )}
+                    </AnimatePresence>,
+                    dateButtonRef,
+                    openMenu === 'date'
+                  )}
+                </div>
+              )}
 
               {/* Filter Group Pills - Show on all views except Library */}
               {currentView !== 'library' && filterGroups.map(group => {
@@ -507,19 +545,11 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                         e.stopPropagation();
                         toggleMenu(group.id, e);
                       }}
-                      className={`
-                        flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap z-10 relative
-                        ${isOpen 
-                          ? 'bg-gray-900 text-white border-gray-900' 
-                          : isActive 
-                            ? 'bg-gray-900 text-white border-gray-900'
-                            : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
-                        }
-                      `}
+                      className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap z-10 relative bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60"
                     >
                       <span>{group.name}</span>
                       {isActive && !isOpen && (
-                        <span className="px-1.5 py-0.5 bg-white/20 rounded text-xs font-semibold">
+                        <span className="px-1.5 py-0.5 bg-blue-100 text-blue-700 rounded text-xs font-semibold">
                           {selectedTags.length}
                         </span>
                       )}
@@ -617,14 +647,14 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                             onToggleCategory(category, !isVisible);
                           }
                         }}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 ${
-                          isVisible
-                            ? 'bg-gray-900 text-white border-gray-900'
-                            : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
-                        }`}
+                        className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60"
                       >
                         <span className="capitalize">{category}</span>
-                        {isVisible && <Check className="w-3.5 h-3.5" />}
+                        {isVisible && (
+                          <div className="w-4 h-4 rounded-full border border-blue-400 flex items-center justify-center">
+                            <Check className="w-3 h-3 text-blue-500" />
+                          </div>
+                        )}
                       </button>
                     );
                   })}
@@ -642,14 +672,14 @@ export const FilterBar: React.FC<FilterBarProps> = ({
                             onToggleCategory(group.id, !isVisible);
                           }
                         }}
-                        className={`flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 ${
-                          isVisible
-                            ? 'bg-gray-900 text-white border-gray-900'
-                            : 'bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60'
-                        }`}
+                        className="flex items-center gap-2 px-4 py-2 rounded-full text-sm font-medium border shadow-sm transition-all whitespace-nowrap flex-shrink-0 bg-white/60 text-gray-700 border-white/40 hover:bg-white/80 hover:border-white/60"
                       >
                         <span>{group.name}</span>
-                        {isVisible && <Check className="w-3.5 h-3.5" />}
+                        {isVisible && (
+                          <div className="w-4 h-4 rounded-full border border-blue-400 flex items-center justify-center">
+                            <Check className="w-3 h-3 text-blue-500" />
+                          </div>
+                        )}
                       </button>
                     );
                   })}

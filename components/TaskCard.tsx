@@ -1,17 +1,20 @@
 import React, { useMemo, useState, useRef } from 'react';
-import { RoutineTask, TaskStatus, RoutineFrequency } from '../types';
-import { getTagMetadata, TAG_CATEGORIES, ROUTINE_BADGE_COLOR, DAYS_OF_WEEK } from '../constants';
+import { RoutineTask, TaskStatus, RoutineFrequency, Priority } from '../types';
+import { getTagMetadata, TAG_CATEGORIES, ROUTINE_BADGE_COLOR, DAYS_OF_WEEK, PRIORITY_COLORS } from '../constants';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { CheckmarkCircle01Icon, CircleIcon, Clock01Icon, Calendar01Icon, UserIcon, CheckmarkCircle01Icon as CheckmarkIcon, Cancel01Icon, FireIcon } from '@hugeicons/core-free-icons';
 import { Badge } from './Badge';
 import { useMutation } from 'convex/react';
 import { api } from '../convex/_generated/api';
 import { Id } from '../convex/_generated/dataModel';
+import { cn } from '../lib/utils';
+import { motion, AnimatePresence } from 'framer-motion';
 
 interface TaskCardProps {
   task: RoutineTask;
   onToggle: (id: string) => void;
   onClick: (id: string) => void;
+  onDelete?: (id: string) => void;
 }
 
 // Helper to format routine frequency display
@@ -68,10 +71,10 @@ const useGroupedTags = (task: RoutineTask) => {
 };
 
 const statusDotColors: Record<TaskStatus, string> = {
-  [TaskStatus.Active]: 'bg-blue-500 shadow-sm shadow-blue-200',
-  [TaskStatus.WaitingOn]: 'bg-yellow-500 shadow-sm shadow-yellow-200',
-  [TaskStatus.SomedayMaybe]: 'bg-gray-400',
-  [TaskStatus.Archived]: 'bg-slate-400',
+  [TaskStatus.Active]: 'bg-blue-500 shadow-sm shadow-blue-200/50',
+  [TaskStatus.WaitingOn]: 'bg-yellow-500 shadow-sm shadow-yellow-200/50',
+  [TaskStatus.SomedayMaybe]: 'bg-gray-400 shadow-sm shadow-gray-200/50',
+  [TaskStatus.Archived]: 'bg-slate-400 shadow-sm shadow-slate-200/50',
 };
 
 // Get card accent color based on status and category
@@ -116,17 +119,56 @@ const getCardColor = (status: TaskStatus, categoryMeta: ReturnType<typeof getTag
 
 // Helper to convert hex to rgba with opacity
 const hexToRgba = (hex: string, opacity: number): string => {
-  const r = parseInt(hex.slice(1, 3), 16);
-  const g = parseInt(hex.slice(3, 5), 16);
-  const b = parseInt(hex.slice(5, 7), 16);
-  return `rgba(${r}, ${g}, ${b}, ${opacity})`;
+  let c: any;
+  if (/^#([A-Fa-f0-9]{3}){1,2}$/.test(hex)) {
+    c = hex.substring(1).split('');
+    if (c.length === 3) {
+      c = [c[0], c[0], c[1], c[1], c[2], c[2]];
+    }
+    c = '0x' + c.join('');
+    return `rgba(${[(c >> 16) & 255, (c >> 8) & 255, c & 255].join(',')},${opacity})`;
+  }
+  // Fallback for safety, though it shouldn't be hit with the color map
+  return `rgba(161, 161, 170, ${opacity})`;
 };
 
-export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) => {
+const priorityBgColors: Record<string, string> = {
+  Urgent: 'bg-red-500/20',
+  High: 'bg-orange-500/20',
+  Medium: 'bg-yellow-500/20',
+  Low: 'bg-blue-500/20',
+};
+
+const priorityBorderColors: Record<string, string> = {
+  Urgent: 'border-red-400',
+  High: 'border-orange-400',
+  Medium: 'border-yellow-400',
+  Low: 'border-blue-400',
+};
+
+export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick, onDelete }) => {
   const groupedTags = useGroupedTags(task);
   const mainCategory = groupedTags.domains[0]; // Primary domain
   const categoryMeta = mainCategory ? getTagMetadata(mainCategory) : null;
   
+  const cardAccentColor = useMemo(() => {
+    if (categoryMeta && categoryMeta.color) {
+      const colorMatch = categoryMeta.color.match(/(?:bg|text)-(\w+)-(\d+)/);
+      if (colorMatch) {
+        const [, colorName] = colorMatch;
+        const categoryColorMap: Record<string, string> = {
+          'indigo': '#818CF8', 'pink': '#F9A8D4', 'purple': '#C084FC',
+          'emerald': '#6EE7B7', 'rose': '#FCA5A5', 'amber': '#FCD34D',
+          'blue': '#93C5FD', 'green': '#86EFAC', 'red': '#F87171',
+          'cyan': '#67E8F9', 'yellow': '#FDE047', 'teal': '#5EEAD4',
+          'orange': '#FB923C', 'gray': '#A1A1AA', 'slate': '#94A3B8',
+        };
+        return categoryColorMap[colorName] || '#A1A1AA'; // default gray
+      }
+    }
+    return '#A1A1AA'; // default gray if no category
+  }, [categoryMeta]);
+
   const completeRoutine = useMutation(api.routines.complete);
   const uncompleteRoutine = useMutation(api.routines.uncomplete);
   
@@ -154,6 +196,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
   // Swipe gesture state - using refs to avoid stale closures
   const [swipeOffset, setSwipeOffset] = useState(0);
   const [isSwiping, setIsSwiping] = useState(false);
+  const [swipeDirection, setSwipeDirection] = useState<'left' | 'right' | null>(null);
   const swipeOffsetRef = useRef(0);
   const isSwipingRef = useRef(false);
   const touchStartX = useRef<number | null>(null);
@@ -186,6 +229,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
     isCurrentlySwiping.current = false;
     setIsSwiping(false);
     setSwipeOffset(0);
+    setSwipeDirection(null);
   };
 
   const updateSwipe = (clientX: number, clientY: number) => {
@@ -198,9 +242,18 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
     if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10) {
       isCurrentlySwiping.current = true;
       setIsSwiping(true);
-      // Only allow swiping right
+      
+      // Determine swipe direction
       if (deltaX > 0) {
+        // Swipe right - add to today
+        setSwipeDirection('right');
         const offset = Math.min(deltaX, 120);
+        currentSwipeOffset.current = offset;
+        setSwipeOffset(offset);
+      } else if (deltaX < 0 && onDelete) {
+        // Swipe left - delete
+        setSwipeDirection('left');
+        const offset = Math.max(deltaX, -200);
         currentSwipeOffset.current = offset;
         setSwipeOffset(offset);
       }
@@ -211,21 +264,18 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
     if (touchStartX.current === null) return;
     
     const threshold = 100;
-    const finalOffset = currentSwipeOffset.current;
+    const finalOffset = Math.abs(currentSwipeOffset.current);
     const wasSwiping = isCurrentlySwiping.current;
     const hadSwipe = finalOffset >= threshold && wasSwiping;
+    const direction = swipeDirection;
     
-    console.log('🔍 endSwipe called:', { finalOffset, wasSwiping, hadSwipe, threshold });
-    
-    if (hadSwipe) {
+    if (hadSwipe && direction === 'right') {
       // Mark that we just swiped to prevent click
       justSwiped.current = true;
       
       // Trigger toggle today status
       try {
-        console.log('🔄 Toggling today status for task:', task.id, 'Current actionDate:', task.actionDate);
         const result = await toggleTodayStatus({ id: task.id as Id<"tasks"> });
-        console.log('✅ Toggle result:', result);
         // Haptic feedback (if available)
         if ('vibrate' in navigator) {
           navigator.vibrate(10);
@@ -233,11 +283,25 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
       } catch (error) {
         console.error('❌ Error toggling today status:', error);
       }
+    } else if (hadSwipe && direction === 'left' && onDelete) {
+      // Mark that we just swiped to prevent click
+      justSwiped.current = true;
+      
+      // Trigger delete
+      if (window.confirm('Delete this task?')) {
+        onDelete(task.id);
+      }
+      
+      // Haptic feedback (if available)
+      if ('vibrate' in navigator) {
+        navigator.vibrate(10);
+      }
     }
     
     // Reset swipe state
     setSwipeOffset(0);
     setIsSwiping(false);
+    setSwipeDirection(null);
     currentSwipeOffset.current = 0;
     isCurrentlySwiping.current = false;
     touchStartX.current = null;
@@ -254,6 +318,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
   const handleTouchStart = (e: React.TouchEvent) => {
     const touch = e.touches[0];
     startSwipe(touch.clientX, touch.clientY);
+    e.stopPropagation(); // Prevent navigation swipe from starting
   };
 
   const handleTouchMove = (e: React.TouchEvent) => {
@@ -261,10 +326,19 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
     updateSwipe(touch.clientX, touch.clientY);
     if (isSwiping) {
       e.preventDefault(); // Prevent scrolling during swipe
+      e.stopPropagation(); // Prevent navigation swipe
+    } else if (touchStartX.current !== null && touchStartY.current !== null) {
+      const deltaX = touch.clientX - touchStartX.current;
+      const deltaY = Math.abs(touch.clientY - touchStartY.current);
+      // If we detect a horizontal swipe starting, stop propagation
+      if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10) {
+        e.stopPropagation(); // Prevent navigation swipe
+      }
     }
   };
 
-  const handleTouchEnd = () => {
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    e.stopPropagation(); // Prevent navigation swipe
     endSwipe();
   };
 
@@ -272,7 +346,7 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
     if (e.button !== 0) return; // Only left mouse button
     startSwipe(e.clientX, e.clientY);
     e.preventDefault();
-    e.stopPropagation();
+    e.stopPropagation(); // Prevent navigation swipe from starting
     
     let hadSignificantMovement = false;
     
@@ -322,118 +396,159 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
 
   return (
     <div className="relative mb-3 overflow-visible">
-      {/* Background action indicator - revealed in the left space when swiping */}
-      <div 
-        className={`
-          absolute left-0 top-0 bottom-0 rounded-2xl flex items-center pl-6 pointer-events-none
-          transition-opacity duration-300 ease-out
-          ${swipeOffset > 15 ? 'opacity-100' : 'opacity-0'}
-        `}
-        style={{
-          width: `${Math.min(swipeOffset, 200)}px`,
-        }}
-      >
-        <div className={`
-          flex flex-col items-center gap-1.5
-          ${isInTodayList ? 'text-red-500' : 'text-green-500'}
-          transition-all duration-300 ease-out
-        `}
-        style={{
-          transform: `scale(${Math.min(1, 0.7 + (swipeOffset / 150))})`,
-        }}
+      {/* Background action indicator - revealed in the left space when swiping right */}
+      {swipeDirection === 'right' && (
+        <div 
+          className={`
+            absolute left-0 top-0 bottom-0 rounded-2xl flex items-center pl-6 pointer-events-none z-0
+            transition-opacity duration-300 ease-out
+            ${swipeOffset > 15 ? 'opacity-100' : 'opacity-0'}
+          `}
+          style={{
+            width: `${Math.min(swipeOffset, 200)}px`,
+          }}
         >
           <div className={`
-            w-12 h-12 rounded-full flex items-center justify-center shadow-sm
-            ${isInTodayList ? 'bg-red-50 border-2 border-red-200' : 'bg-green-50 border-2 border-green-200'}
+            flex flex-col items-center gap-1.5
+            ${isInTodayList ? 'text-red-500' : 'text-green-500'}
             transition-all duration-300 ease-out
           `}
           style={{
-            transform: `scale(${Math.min(1, 0.6 + (swipeOffset / 120))}) rotate(${swipeOffset > 80 ? '0deg' : `${(swipeOffset / 80) * 360}deg`})`,
+            transform: `scale(${Math.min(1, 0.7 + (swipeOffset / 150))})`,
           }}
           >
-            {isInTodayList ? (
-              <HugeiconsIcon icon={Cancel01Icon} size={24} className="text-red-600" />
-            ) : (
-              <HugeiconsIcon icon={CheckmarkIcon} size={24} className="text-green-600" />
-            )}
-          </div>
-          <div className="w-[80px] flex items-center justify-center">
-            <span className={`
-              text-[10px] font-semibold text-center whitespace-nowrap
+            <div className={`
+              w-12 h-12 rounded-full flex items-center justify-center shadow-sm
+              ${isInTodayList ? 'bg-red-50 border-2 border-red-200' : 'bg-green-50 border-2 border-green-200'}
               transition-all duration-300 ease-out
             `}
             style={{
-              opacity: Math.min(1, (swipeOffset - 30) / 40),
+              transform: `scale(${Math.min(1, 0.6 + (swipeOffset / 120))}) rotate(${swipeOffset > 80 ? '0deg' : `${(swipeOffset / 80) * 360}deg`})`,
             }}
             >
-              {isInTodayList ? 'Remove' : 'Add to Today'}
-            </span>
+              {isInTodayList ? (
+                <HugeiconsIcon icon={Cancel01Icon} size={24} className="text-red-600" />
+              ) : (
+                <HugeiconsIcon icon={CheckmarkIcon} size={24} className="text-green-600" />
+              )}
+            </div>
+            <div className="w-[80px] flex items-center justify-center">
+              <span className={`
+                text-[10px] font-semibold text-center whitespace-nowrap
+                transition-all duration-300 ease-out
+              `}
+              style={{
+                opacity: Math.min(1, (swipeOffset - 30) / 40),
+              }}
+              >
+                {isInTodayList ? 'Remove' : 'Add to Today'}
+              </span>
+            </div>
           </div>
         </div>
-      </div>
+      )}
+
+      {/* Background delete indicator - revealed in the right space when swiping left */}
+      {swipeDirection === 'left' && onDelete && (
+        <div 
+          className={`
+            absolute right-0 top-0 bottom-0 flex items-center justify-end pr-4 pointer-events-none z-0
+            transition-opacity duration-300 ease-out
+            ${Math.abs(swipeOffset) > 15 ? 'opacity-100' : 'opacity-0'}
+          `}
+        >
+          <HugeiconsIcon 
+            icon={Cancel01Icon} 
+            size={24} 
+            className="text-red-600/85 transition-all duration-200 ease-out"
+            style={{
+              transform: `scale(${Math.min(1, 0.85 + (Math.abs(swipeOffset) / 400))})`,
+            }}
+          />
+        </div>
+      )}
 
       {/* Task Card */}
       <div 
         ref={cardRef}
+        data-swipeable="true"
         onTouchStart={handleTouchStart}
         onTouchMove={handleTouchMove}
         onTouchEnd={handleTouchEnd}
         onMouseDown={handleMouseDown}
         onClick={handleClick}
-        className={`
-          relative rounded-2xl p-4 overflow-hidden group
-          transition-all duration-200 cursor-pointer backdrop-blur-md
-          ${task.isCompleted ? 'opacity-60 grayscale-[0.5]' : ''}
-          ${isSwiping ? 'transition-transform duration-100 ease-out' : 'transition-all duration-200'}
-          ${isSwiping ? 'shadow-2xl scale-[1.02]' : 'hover:shadow-lg'}
-        `}
+        className={cn(
+          "relative rounded-2xl p-5 overflow-hidden group transition-all duration-300 cursor-pointer z-10",
+          task.isCompleted && "opacity-60 grayscale-[0.5]",
+          isSwiping ? "transition-transform duration-100 ease-out scale-[1.02]" : "hover:scale-[1.01]",
+        )}
         style={{
           transform: `translateX(${swipeOffset}px)`,
           zIndex: 10,
-          backgroundColor: task.isCompleted 
-            ? 'rgba(255, 255, 255, 0.4)' 
-            : 'rgba(255, 255, 255, 0.7)',
-          border: `1px solid rgba(255, 255, 255, 0.5)`,
+          backgroundColor: 'rgba(255, 255, 255, 0.8)',
+          backdropFilter: 'blur(24px)',
+          WebkitBackdropFilter: 'blur(24px)',
+          border: '1px solid rgba(0, 0, 0, 0.05)',
           boxShadow: isSwiping
-            ? '0 20px 50px -12px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.3)'
-            : '0 4px 12px -2px rgba(0, 0, 0, 0.08)',
+            ? `0 20px 60px -12px rgba(0, 0, 0, 0.12)`
+            : `0 8px 32px -8px rgba(0, 0, 0, 0.08)`,
         }}
       >
-        {/* Gradient overlay for depth - similar to time blocks */}
+        {/* Subtle noise texture */}
         <div 
-          className="absolute inset-0 opacity-50 pointer-events-none bg-gradient-to-br from-white/50 to-transparent"
+          className="absolute inset-0 opacity-[0.015] pointer-events-none"
+          style={{ backgroundImage: 'url("data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAADIAAAAyCAYAAAAeP4ixAAAACXBIWXMAAAsTAAALEwEAmpwYAAAAAXNSR0IArs4c6QAAAARnQU1BAACxjwv8YQUAAACISURBVHgB7dAxAQAwEAOh+id81P2A/g0i8MLMvLl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXl5eXk/5QCddAUTsXIsPwAAAABJRU5ErkJggg==")' }}
         />
+        
+        {/* Gradient overlay for depth - more subtle */}
+        <div 
+          className="absolute inset-0 opacity-80 pointer-events-none bg-gradient-to-br from-white/20 to-transparent"
+        />
+
         {/* Content */}
-        <div className="relative flex items-start gap-3 min-w-0 z-10">
+        <div className="relative flex items-center gap-4 min-w-0 z-10">
         {/* Checkbox */}
         <button
           onClick={(e) => {
             e.stopPropagation();
             onToggle(task.id);
           }}
-          className="mt-0.5 text-gray-400 hover:text-blue-600 transition-colors focus:outline-none"
+          className={`
+            w-6 h-6 rounded-full flex items-center justify-center transition-all cursor-pointer flex-shrink-0
+            border ${task.isCompleted 
+              ? 'border-gray-400' 
+              : task.priority 
+                ? `${priorityBorderColors[task.priority] || 'border-gray-300'}` 
+                : 'border-gray-300'
+            }
+            ${task.priority && !task.isCompleted 
+              ? `${priorityBgColors[task.priority] || 'bg-gray-400/20'} backdrop-blur-sm` 
+              : 'bg-gray-100/40 backdrop-blur-sm'
+            }
+            hover:scale-110 active:scale-95
+          `}
         >
-          {task.isCompleted ? (
-            <HugeiconsIcon icon={CheckmarkCircle01Icon} size={20} className="text-gray-400" />
-          ) : (
-            <HugeiconsIcon icon={CircleIcon} size={20} />
-          )}
+          <AnimatePresence>
+            {task.isCompleted ? (
+              <motion.div
+                initial={{ scale: 0 }}
+                animate={{ scale: 1 }}
+                exit={{ scale: 0 }}
+                transition={{ type: "spring", stiffness: 500, damping: 30 }}
+                className="w-3 h-3 rounded-full bg-gray-700"
+              />
+            ) : null}
+          </AnimatePresence>
         </button>
 
         <div className="flex-1 min-w-0">
-          {/* Top Row: Status Dot + Title + Routine Badge */}
-          <div className="flex items-center gap-3 mb-2">
-            {!task.isCompleted && (
-              <div className={`w-2 h-2 rounded-full ${statusDotColors[task.status]}`} />
-            )}
-            <h3 className={`text-base font-medium text-gray-900 truncate ${task.isCompleted ? 'line-through text-gray-500' : ''}`}>
+          {/* Top Row: Title + Routine Badge */}
+          <div className="flex items-center gap-2.5 mb-3">
+            <h3 className={`text-base font-semibold text-gray-800 truncate leading-snug ${task.isCompleted ? 'line-through text-gray-500' : ''}`}>
               {task.title}
             </h3>
             {task.isRoutine && (
-              <span className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold tracking-wide backdrop-blur-md border border-white/50 ${ROUTINE_BADGE_COLOR} shrink-0 shadow-lg`} style={{
-                backgroundColor: 'rgba(255, 255, 255, 0.6)',
-                boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
-              }}>
+              <span className="px-2 py-0.5 rounded-full text-[10px] font-semibold tracking-wide shrink-0 bg-gray-100 text-gray-600 border border-gray-200">
                 Routine
               </span>
             )}
@@ -441,104 +556,61 @@ export const TaskCard: React.FC<TaskCardProps> = ({ task, onToggle, onClick }) =
           
           {/* Routine Info Row */}
           {task.isRoutine && task.routine && (
-            <div className="flex items-center gap-3 mb-2 text-xs text-gray-600">
-              <span className="font-medium">{formatFrequency(task.routine)}</span>
+            <div className="flex items-center gap-1 mb-1.5 text-[10px] text-gray-500/70">
+              <span className="font-normal">{formatFrequency(task.routine)}</span>
               {task.routine.goal && (
-                <span className="text-gray-500">• {task.routine.goal}</span>
+                <span className="text-gray-400/70">• {task.routine.goal}</span>
               )}
               {task.routine.trackStreaks && task.routine.currentStreak !== undefined && (
-                <div className="flex items-center gap-1 text-purple-600">
-                  <HugeiconsIcon icon={FireIcon} size={12} />
-                  <span>{task.routine.currentStreak} day streak</span>
+                <div className="flex items-center gap-0.5 text-purple-500/70">
+                  <HugeiconsIcon icon={FireIcon} size={9} />
+                  <span className="font-normal">{task.routine.currentStreak} day streak</span>
                   {task.routine.longestStreak !== undefined && task.routine.longestStreak > task.routine.currentStreak && (
-                    <span className="text-gray-400">(best: {task.routine.longestStreak})</span>
+                    <span className="text-gray-400/60">(best: {task.routine.longestStreak})</span>
                   )}
                 </div>
               )}
               {routineCompletedToday && (
-                <span className="text-green-600 font-medium">✓ Done today</span>
+                <span className="text-green-500/70 font-normal">✓ Done today</span>
               )}
             </div>
           )}
 
           {/* Bottom: Category Pill + Subtags + Metadata */}
-          <div className="flex items-start gap-3 text-xs text-gray-500 mt-1 min-w-0">
+          <div className="flex items-start gap-3 text-xs text-gray-500 mt-2 min-w-0">
             {/* Left: Category + Subtags */}
             <div className="flex items-center gap-2 flex-wrap min-w-0 flex-1">
-              {mainCategory && categoryMeta && (
-                <span className={`px-2.5 py-1 rounded-lg text-[10px] font-semibold tracking-wide backdrop-blur-md border border-white/50 ${categoryMeta.color} shrink-0 shadow-lg`} style={{
-                  backgroundColor: 'rgba(255, 255, 255, 0.6)',
-                  boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
-                }}>
+              {mainCategory && (
+                <span className="px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide shrink-0 bg-gray-100 text-gray-600 border border-gray-200">
                   {mainCategory}
                 </span>
               )}
               
-              {subTags.map((tag, i) => {
-                const meta = getTagMetadata(tag);
-                return (
-                  <span key={tag} className={`px-2.5 py-1 rounded-lg text-[10px] font-medium backdrop-blur-md border border-white/50 ${meta.color} shrink-0 shadow-lg`} style={{
-                    backgroundColor: 'rgba(255, 255, 255, 0.6)',
-                    boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
-                  }}>
-                    {tag}
-                  </span>
-                );
-              })}
+              {subTags.map((tag) => (
+                <span key={tag} className="px-2 py-0.5 rounded-full text-[10px] font-medium tracking-wide shrink-0 bg-gray-100 text-gray-600 border border-gray-200">
+                  {tag}
+                </span>
+              ))}
             </div>
 
-            {/* Right: Metadata Icons + Routine Complete Button */}
-            <div className="flex items-center gap-3 shrink-0">
-              {task.isRoutine && task.routine && task.routine.timeEstimate && (
-                <div className="flex items-center gap-1" title="Time Estimate">
+            {/* Right: Metadata Icons + Status */}
+            <div className="flex items-center gap-4 shrink-0">
+              {task.timeEstimate && (
+                <div className="flex items-center gap-1.5" title="Time Estimate">
                   <HugeiconsIcon icon={Clock01Icon} size={12} className="text-gray-400" />
-                  <span>{task.routine.timeEstimate}</span>
-                </div>
-              )}
-              {!task.isRoutine && task.timeEstimate && (
-                <div className="flex items-center gap-1" title="Time Estimate">
-                  <HugeiconsIcon icon={Clock01Icon} size={12} className="text-gray-400" />
-                  <span>{task.timeEstimate}</span>
+                  <span className="text-xs font-medium text-gray-600">{task.timeEstimate}</span>
                 </div>
               )}
               {task.actionDate && (
                 <div 
-                  className="flex items-center gap-1" 
+                  className="flex items-center gap-1.5" 
                   title="Action Date"
-                  key={task.actionDate}
-                  style={{
-                    animation: 'fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1)'
-                  }}
                 >
                   <HugeiconsIcon icon={Calendar01Icon} size={12} className="text-gray-400" />
-                  <span>{new Date(task.actionDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
+                  <span className="text-xs font-medium text-gray-600">{new Date(task.actionDate).toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span>
                 </div>
               )}
-              {task.participants && task.participants.length > 0 && (
-                 <div className="flex items-center gap-1" title="Participants">
-                   <HugeiconsIcon icon={UserIcon} size={12} className="text-gray-400" />
-                   <span className="truncate max-w-[100px]">{task.participants.join(', ')}</span>
-                 </div>
-              )}
-              {task.isRoutine && task.routine && (
-                <button
-                  onClick={handleRoutineToggle}
-                  className={`px-2.5 py-1 rounded-lg text-xs font-medium transition-all backdrop-blur-md border ${
-                    routineCompletedToday
-                      ? 'text-green-700 border-green-500/40 hover:border-green-500/60'
-                      : 'text-gray-600 border-white/50 hover:border-white/70'
-                  }`}
-                  style={{
-                    backgroundColor: routineCompletedToday 
-                      ? 'rgba(34, 197, 94, 0.15)' 
-                      : 'rgba(255, 255, 255, 0.6)',
-                    boxShadow: '0 2px 8px -2px rgba(0, 0, 0, 0.1), inset 0 1px 0 rgba(255, 255, 255, 0.8)',
-                  }}
-                  title={routineCompletedToday ? 'Mark as not done today' : 'Mark as done today'}
-                >
-                  {routineCompletedToday ? 'Done' : 'Mark done'}
-                </button>
-              )}
+              <span className="text-xs font-medium text-gray-500">{task.status}</span>
             </div>
           </div>
         </div>

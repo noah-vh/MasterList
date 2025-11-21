@@ -2,9 +2,10 @@ import React, { useState, useRef, useEffect } from 'react';
 import { Entry } from '../types';
 import { HugeiconsIcon } from '@hugeicons/react';
 import { CheckmarkCircle01Icon, Cancel01Icon, Add01Icon, Edit01Icon, Delete01Icon, Attachment01Icon, Link01Icon, Message01Icon } from '@hugeicons/core-free-icons';
-import { useQuery } from 'convex/react';
+import { useQuery, useAction } from 'convex/react';
 import { api } from '../convex/_generated/api';
 import { ContentEntryModal } from './ContentEntryModal';
+import { ChatInterface } from './ChatInterface';
 
 interface EntryCardProps {
   entry: Entry;
@@ -15,6 +16,8 @@ interface EntryCardProps {
   onContentUpdate?: (entry: Entry) => void;
   showTimestamp?: boolean; // Whether to show timestamp (iMessage-style)
   isFirstInGroup?: boolean; // First entry in a time group
+  isChatActive?: boolean; // Whether this chat is the active one
+  onChatActiveChange?: (isActive: boolean) => void; // Callback when chat active state changes
 }
 
 export const EntryCard: React.FC<EntryCardProps> = ({ 
@@ -25,7 +28,9 @@ export const EntryCard: React.FC<EntryCardProps> = ({
   onDelete,
   onContentUpdate,
   showTimestamp = false,
-  isFirstInGroup = false
+  isFirstInGroup = false,
+  isChatActive = false,
+  onChatActiveChange,
 }) => {
   const [showPortalCard, setShowPortalCard] = useState(false);
   const [isExpanded, setIsExpanded] = useState(false);
@@ -34,11 +39,76 @@ export const EntryCard: React.FC<EntryCardProps> = ({
   const [showChatPortalCard, setShowChatPortalCard] = useState(false);
   const [isChatExpanded, setIsChatExpanded] = useState(false);
   const chatCardRef = useRef<HTMLDivElement>(null);
+  const [chatName, setChatName] = useState<string>('Chat conversation');
+  const generateChatTitle = useAction(api.ai.generateChatTitle);
+  
+  // Swipe-to-delete state
+  const [swipeOffset, setSwipeOffset] = useState(0);
+  const [isSwiping, setIsSwiping] = useState(false);
+  const swipeStartX = useRef<number | null>(null);
+  const swipeStartY = useRef<number | null>(null);
+  const swipeContainerRef = useRef<HTMLDivElement>(null);
+  const SWIPE_THRESHOLD = 100; // Minimum distance to trigger delete
+  const DELETE_THRESHOLD = 0.4; // 40% of card width to auto-delete
+  
+  // Sync expanded state with active state
+  useEffect(() => {
+    if (isChatActive && !isChatExpanded) {
+      setIsChatExpanded(true);
+    } else if (!isChatActive && isChatExpanded) {
+      setIsChatExpanded(false);
+    }
+  }, [isChatActive]);
+  
   
   const isActivity = entry.entryType === 'activity';
   const isManual = entry.entryType === 'manual';
   const isContent = entry.entryType === 'content';
   const isChat = entry.contentType === 'chat' && entry.chatThread;
+  
+  // Generate chat name from conversation using AI
+  useEffect(() => {
+    const generateName = async () => {
+      if (!entry.chatThread || entry.chatThread.length === 0) {
+        setChatName(entry.content || 'Chat conversation');
+        return;
+      }
+      
+      // Only generate if we have at least 2 messages (user + assistant)
+      if (entry.chatThread.length >= 2) {
+        try {
+          const title = await generateChatTitle({
+            messages: entry.chatThread.map(m => ({
+              role: m.role,
+              content: m.content,
+            })),
+          });
+          setChatName(title);
+        } catch (error) {
+          console.error('Error generating chat title:', error);
+          // Fallback to first user message
+          const firstUserMessage = entry.chatThread.find(m => m.role === 'user');
+          if (firstUserMessage) {
+            const content = firstUserMessage.content.trim();
+            setChatName(content.length > 50 ? content.substring(0, 47) + '...' : content);
+          } else {
+            setChatName(entry.content || 'Chat conversation');
+          }
+        }
+      } else {
+        // If only one message, use it as the name
+        const firstUserMessage = entry.chatThread.find(m => m.role === 'user');
+        if (firstUserMessage) {
+          const content = firstUserMessage.content.trim();
+          setChatName(content.length > 50 ? content.substring(0, 47) + '...' : content);
+        } else {
+          setChatName(entry.content || 'Chat conversation');
+        }
+      }
+    };
+    
+    generateName();
+  }, [entry.chatThread, entry.content, generateChatTitle]);
 
   // Scroll to card and expand when clicked
   useEffect(() => {
@@ -52,16 +122,166 @@ export const EntryCard: React.FC<EntryCardProps> = ({
     }
   }, [isExpanded]);
 
-  // Scroll to chat card when expanded
+  // Scroll to chat card when expanded - position above SmartInput
   useEffect(() => {
     if (isChatExpanded && chatCardRef.current) {
-      chatCardRef.current.scrollIntoView({
-        behavior: 'smooth',
-        block: 'center',
-        inline: 'nearest'
-      });
+      // Simple scroll to show the chat, let natural spacing handle the rest
+      setTimeout(() => {
+        chatCardRef.current?.scrollIntoView({
+          behavior: 'smooth',
+          block: 'nearest',
+        });
+      }, 100);
     }
   }, [isChatExpanded]);
+  
+  // Track if we just swiped to prevent click events
+  const justSwipedRef = useRef(false);
+  
+  // Swipe gesture handlers
+  const handleSwipeStart = (clientX: number, clientY: number) => {
+    if (!onDelete) return; // Only allow swipe if delete is available
+    swipeStartX.current = clientX;
+    swipeStartY.current = clientY;
+    setIsSwiping(true);
+    justSwipedRef.current = false;
+  };
+
+  const handleSwipeMove = (clientX: number, clientY: number) => {
+    if (swipeStartX.current === null || swipeStartY.current === null || !onDelete) return;
+    
+    const deltaX = clientX - swipeStartX.current;
+    const deltaY = Math.abs(clientY - swipeStartY.current);
+    
+    // Only allow left swipe (negative deltaX) and ensure it's more horizontal than vertical
+    if (deltaX < 0 && Math.abs(deltaX) > deltaY && Math.abs(deltaX) > 10) {
+      if (!isSwiping) {
+        setIsSwiping(true);
+      }
+      setSwipeOffset(Math.max(deltaX, -200)); // Cap at -200px
+    }
+  };
+
+  const handleSwipeEnd = () => {
+    if (!isSwiping || !swipeContainerRef.current || !onDelete) {
+      setIsSwiping(false);
+      swipeStartX.current = null;
+      swipeStartY.current = null;
+      return;
+    }
+
+    const containerWidth = swipeContainerRef.current.offsetWidth;
+    const shouldDelete = Math.abs(swipeOffset) >= containerWidth * DELETE_THRESHOLD || Math.abs(swipeOffset) >= SWIPE_THRESHOLD;
+
+    if (shouldDelete && onDelete) {
+      // Mark that we swiped to prevent click
+      justSwipedRef.current = true;
+      
+      // Trigger delete
+      if (window.confirm('Delete this entry?')) {
+        onDelete(entry.id);
+      }
+      
+      // Reset immediately
+      setSwipeOffset(0);
+      setIsSwiping(false);
+      swipeStartX.current = null;
+      swipeStartY.current = null;
+      
+      // Reset justSwiped after a delay
+      setTimeout(() => {
+        justSwipedRef.current = false;
+      }, 300);
+    } else {
+      // Snap back
+      setSwipeOffset(0);
+      setIsSwiping(false);
+      swipeStartX.current = null;
+      swipeStartY.current = null;
+    }
+  };
+
+  // Touch event handlers
+  const handleTouchStart = (e: React.TouchEvent) => {
+    if (!onDelete) return;
+    const touch = e.touches[0];
+    handleSwipeStart(touch.clientX, touch.clientY);
+    e.stopPropagation(); // Prevent navigation swipe from starting
+  };
+
+  const handleTouchMove = (e: React.TouchEvent) => {
+    if (swipeStartX.current === null || swipeStartY.current === null || !onDelete) return;
+    
+    const touch = e.touches[0];
+    const deltaX = touch.clientX - swipeStartX.current;
+    const deltaY = Math.abs(touch.clientY - swipeStartY.current);
+    
+    // If we're swiping horizontally, prevent default to allow swipe
+    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10) {
+      e.preventDefault(); // Prevent scrolling while swiping
+      e.stopPropagation(); // Prevent navigation swipe
+      if (!isSwiping) {
+        setIsSwiping(true);
+      }
+      handleSwipeMove(touch.clientX, touch.clientY);
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent) => {
+    e.stopPropagation(); // Prevent navigation swipe
+    handleSwipeEnd();
+  };
+
+  // Mouse event handlers (for desktop drag)
+  const handleMouseDown = (e: React.MouseEvent) => {
+    // Only start swipe on left mouse button
+    if (e.button === 0 && onDelete) {
+      handleSwipeStart(e.clientX, e.clientY);
+      e.preventDefault();
+      e.stopPropagation(); // Prevent navigation swipe from starting
+    }
+  };
+  
+  // Prevent clicks when swiping
+  const handleClick = (e: React.MouseEvent) => {
+    if (justSwipedRef.current || isSwiping || Math.abs(swipeOffset) > 5) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+  };
+
+  // Global mouse move/up handlers for drag
+  useEffect(() => {
+    if (swipeStartX.current !== null && onDelete) {
+      const handleGlobalMouseMove = (e: MouseEvent) => {
+        if (swipeStartX.current !== null && swipeStartY.current !== null) {
+          const deltaX = e.clientX - swipeStartX.current;
+          const deltaY = Math.abs(e.clientY - swipeStartY.current);
+          
+          // If we're swiping horizontally, handle it
+          if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 10) {
+            if (!isSwiping) {
+              setIsSwiping(true);
+            }
+            handleSwipeMove(e.clientX, e.clientY);
+          }
+        }
+      };
+      const handleGlobalMouseUp = () => {
+        handleSwipeEnd();
+      };
+
+      document.addEventListener('mousemove', handleGlobalMouseMove);
+      document.addEventListener('mouseup', handleGlobalMouseUp);
+
+      return () => {
+        document.removeEventListener('mousemove', handleGlobalMouseMove);
+        document.removeEventListener('mouseup', handleGlobalMouseUp);
+      };
+    }
+  }, [swipeStartX.current, isSwiping, swipeOffset, onDelete]);
+
   
   // Get image URL if this is a content entry with an image
   const imageUrl = useQuery(
@@ -87,30 +307,34 @@ export const EntryCard: React.FC<EntryCardProps> = ({
     if (entry.activityType === 'task_created') {
       return {
         prefix: 'Task created',
-        icon: <HugeiconsIcon icon={Add01Icon} size={14} />,
-        color: '#93C5FD', // blue-300 - paler blue
-        textColor: 'text-blue-800'
+        icon: <HugeiconsIcon icon={Add01Icon} size={10} />,
+        bgColor: 'bg-blue-500/8',
+        textColor: 'text-blue-600/85',
+        borderColor: 'border-blue-500/20'
       };
     } else if (entry.activityType === 'task_completed') {
       return {
         prefix: 'Task completed',
-        icon: <HugeiconsIcon icon={CheckmarkCircle01Icon} size={14} />,
-        color: '#6EE7B7', // emerald-300 - green
-        textColor: 'text-green-800'
+        icon: <HugeiconsIcon icon={CheckmarkCircle01Icon} size={10} />,
+        bgColor: 'bg-green-500/8',
+        textColor: 'text-green-600/85',
+        borderColor: 'border-green-500/20'
       };
     } else if (entry.activityType === 'task_uncompleted') {
       return {
         prefix: 'Task uncompleted',
-        icon: <HugeiconsIcon icon={Cancel01Icon} size={14} />,
-        color: '#FCA5A5', // red-300 - red
-        textColor: 'text-red-800'
+        icon: <HugeiconsIcon icon={Cancel01Icon} size={10} />,
+        bgColor: 'bg-red-500/8',
+        textColor: 'text-red-600/85',
+        borderColor: 'border-red-500/20'
       };
     } else if (entry.activityType === 'attachment_added') {
       return {
         prefix: 'Attachment added',
-        icon: <HugeiconsIcon icon={Attachment01Icon} size={14} />,
-        color: '#D1D5DB', // gray-300 - grey
-        textColor: 'text-gray-800'
+        icon: <HugeiconsIcon icon={Attachment01Icon} size={10} />,
+        bgColor: 'bg-gray-500/8',
+        textColor: 'text-gray-600/85',
+        borderColor: 'border-gray-500/20'
       };
     }
     return null;
@@ -121,24 +345,14 @@ export const EntryCard: React.FC<EntryCardProps> = ({
       return {
         prefix: 'Attachment added',
         icon: <HugeiconsIcon icon={Attachment01Icon} size={14} />,
-        color: '#D1D5DB', // gray-300 - grey
-        textColor: 'text-gray-800'
+        bgColor: 'bg-gray-500/10',
+        textColor: 'text-gray-700',
+        borderColor: 'border-gray-500/20'
       };
     }
     return null;
   };
 
-  const getChatBadge = () => {
-    if (isChat) {
-      return {
-        prefix: 'Chat conversation',
-        icon: <HugeiconsIcon icon={Message01Icon} size={14} />,
-        color: '#D1D5DB', // gray-300 - grey
-        textColor: 'text-gray-800'
-      };
-    }
-    return null;
-  };
 
   const activityBadge = getActivityBadge();
   
@@ -151,38 +365,29 @@ export const EntryCard: React.FC<EntryCardProps> = ({
   };
 
   return (
-    <div className="py-2 group relative">
-      {/* Edit/Delete Actions - Subtle icons in top-right corner */}
-      {isManual && (onEdit || onDelete) && (
-        <div className="absolute top-2 right-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-          {onEdit && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onEdit(entry);
-              }}
-              className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100/60 rounded-md transition-all backdrop-blur-sm"
-              title="Edit entry"
-            >
-              <HugeiconsIcon icon={Edit01Icon} size={14} />
-            </button>
-          )}
-          {onDelete && (
-            <button
-              onClick={(e) => {
-                e.stopPropagation();
-                onDelete(entry.id);
-              }}
-              className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50/60 rounded-md transition-all backdrop-blur-sm"
-              title="Delete entry"
-            >
-              <HugeiconsIcon icon={Delete01Icon} size={14} />
-            </button>
-          )}
+    <div className="py-2 group relative overflow-hidden">
+      {/* Delete action indicator - fixed on the right, outside swipeable container */}
+      {onDelete && (
+        <div 
+          className={`
+            absolute right-0 top-0 bottom-0 flex items-center justify-end pointer-events-none z-0
+            transition-opacity duration-200 ease-out
+            ${Math.abs(swipeOffset) > 15 ? 'opacity-100' : 'opacity-0'}
+            ${isActivity ? 'pr-2' : 'pr-4'}
+          `}
+        >
+          <HugeiconsIcon 
+            icon={Delete01Icon} 
+            size={isActivity ? 16 : isContent || isChat ? 28 : 20} 
+            className="text-red-600/85 transition-all duration-200 ease-out"
+            style={{
+              transform: `scale(${Math.min(1, 0.85 + (Math.abs(swipeOffset) / 400))})`,
+            }}
+          />
         </div>
       )}
 
-      {/* Timestamp - Centered, small, and subtle for all entries with divider lines */}
+      {/* Timestamp - Outside swipeable container, stays visible during swipe */}
       {showTimestamp && (
         <div className="flex items-center justify-center gap-2.5 mb-2">
           <div className="flex-1 h-px bg-gray-300 opacity-60 max-w-[80px]" />
@@ -192,26 +397,67 @@ export const EntryCard: React.FC<EntryCardProps> = ({
           <div className="flex-1 h-px bg-gray-300 opacity-60 max-w-[80px]" />
         </div>
       )}
+
+      {/* Swipeable container */}
+      <div
+        ref={swipeContainerRef}
+        data-swipeable="true"
+        className="relative transition-transform duration-200 ease-out z-10"
+        style={{
+          transform: `translateX(${swipeOffset}px)`,
+          touchAction: 'pan-x pan-y', // Allow both directions, we'll detect which one
+        }}
+        onTouchStart={handleTouchStart}
+        onTouchMove={handleTouchMove}
+        onTouchEnd={handleTouchEnd}
+        onMouseDown={handleMouseDown}
+      >
+        {/* Content wrapper */}
+        <div className="relative bg-transparent">
+          {/* Edit/Delete Actions - Subtle icons in top-right corner */}
+          {isManual && (onEdit || onDelete) && (
+            <div className="absolute top-2 right-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+              {onEdit && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onEdit(entry);
+                  }}
+                  className="p-1.5 text-gray-400 hover:text-gray-600 hover:bg-gray-100/60 rounded-md transition-all backdrop-blur-sm"
+                  title="Edit entry"
+                >
+                  <HugeiconsIcon icon={Edit01Icon} size={14} />
+                </button>
+              )}
+              {onDelete && (
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onDelete(entry.id);
+                  }}
+                  className="p-1.5 text-gray-400 hover:text-red-500 hover:bg-red-50/60 rounded-md transition-all backdrop-blur-sm"
+                  title="Delete entry"
+                >
+                  <HugeiconsIcon icon={Delete01Icon} size={14} />
+                </button>
+              )}
+            </div>
+          )}
       
       {/* Activity Badge - Long pill with full content, glassy glow style */}
       {isActivity && activityBadge && (
-        <div className="flex justify-center mb-3">
+        <div className="flex justify-center mb-0.5">
           <div 
-            className={`inline-flex items-center gap-3 px-6 py-2.5 ${activityBadge.textColor} rounded-full text-sm font-medium backdrop-blur-sm max-w-[85%] min-w-[240px]`}
-            style={{
-              backgroundColor: `${activityBadge.color}25`,
-              border: `1.5px solid ${activityBadge.color}60`,
-              boxShadow: `0 4px 12px -2px ${activityBadge.color}25, 0 0 0 1px ${activityBadge.color}10`,
-            }}
+            className={`flex items-center gap-1 px-2.5 py-0.5 ${activityBadge.textColor} ${activityBadge.bgColor} ${activityBadge.borderColor} border rounded-full text-xs font-normal backdrop-blur-sm max-w-[85%] min-w-[120px]`}
           >
-            <div className="flex items-center gap-2 flex-shrink-0">
+            <div className="flex items-center gap-0.5 flex-shrink-0">
               {activityBadge.icon}
-              <span className="text-xs font-semibold uppercase tracking-wide opacity-80">
+              <span className="text-[9px] font-normal normal-case tracking-normal opacity-80 whitespace-nowrap">
                 {activityBadge.prefix}
               </span>
             </div>
-            <div className="h-4 w-px bg-current opacity-30 flex-shrink-0" />
-            <span className="truncate font-semibold">
+            <div className="h-2.5 w-px bg-current opacity-20 flex-shrink-0" />
+            <span className="flex-1 truncate font-normal text-[10px] text-center min-w-0">
               {getTaskNameFromContent(entry.content, activityBadge.prefix)}
             </span>
           </div>
@@ -224,12 +470,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
         return attachmentBadge ? (
           <div className="flex justify-center mb-2">
             <div 
-              className={`inline-flex items-center gap-3 px-6 py-2.5 ${attachmentBadge.textColor} rounded-full text-sm font-medium backdrop-blur-sm max-w-[85%] min-w-[240px]`}
-              style={{
-                backgroundColor: `${attachmentBadge.color}25`,
-                border: `1.5px solid ${attachmentBadge.color}60`,
-                boxShadow: `0 4px 12px -2px ${attachmentBadge.color}25, 0 0 0 1px ${attachmentBadge.color}10`,
-              }}
+              className={`inline-flex items-center gap-3 px-6 py-2.5 ${attachmentBadge.textColor} ${attachmentBadge.bgColor} ${attachmentBadge.borderColor} border rounded-full text-sm font-medium backdrop-blur-sm max-w-[85%] min-w-[240px]`}
             >
               <div className="flex items-center gap-2 flex-shrink-0">
                 {attachmentBadge.icon}
@@ -242,7 +483,7 @@ export const EntryCard: React.FC<EntryCardProps> = ({
         ) : null;
       })()}
 
-      {/* Chat Entry Card - Expandable like content entries */}
+      {/* Chat Entry Card - Collapsible like content entries */}
       {isChat && entry.chatThread && (
         <div 
           ref={chatCardRef}
@@ -255,110 +496,108 @@ export const EntryCard: React.FC<EntryCardProps> = ({
           }}
         >
           <div 
-            className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden cursor-pointer transition-all duration-500 ease-in-out"
+            className="bg-white rounded-xl border border-gray-200 shadow-sm overflow-hidden cursor-pointer transition-shadow duration-300"
             style={{
               boxShadow: showChatPortalCard || isChatExpanded 
                 ? '0 10px 25px -5px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05)' 
                 : '0 1px 3px 0 rgba(0, 0, 0, 0.1)',
-              minHeight: isChatExpanded ? 'calc(100vh - 20rem)' : 'auto',
-              maxHeight: isChatExpanded ? 'calc(100vh - 20rem)' : 'none',
             }}
             onClick={(e) => {
+              handleClick(e);
+              if (justSwipedRef.current || isSwiping || Math.abs(swipeOffset) > 5) {
+                return;
+              }
+              e.preventDefault();
               e.stopPropagation();
-              setIsChatExpanded(!isChatExpanded);
+              const newExpanded = !isChatExpanded;
+              setIsChatExpanded(newExpanded);
+              if (onChatActiveChange) {
+                onChatActiveChange(newExpanded);
+              }
             }}
           >
             {/* Content */}
-            <div className="p-4 transition-all duration-500 ease-in-out">
-              {/* Header with close button when expanded */}
-              <div 
-                className="flex items-center justify-between mb-2 transition-all duration-300 ease-in-out overflow-hidden"
-                style={{
-                  maxHeight: isChatExpanded ? '3rem' : '0',
-                  opacity: isChatExpanded ? 1 : 0,
-                  marginBottom: isChatExpanded ? '0.5rem' : '0',
-                }}
-              >
-                <div className="flex items-center gap-2">
-                  <HugeiconsIcon icon={Message01Icon} size={16} className="text-gray-500" />
-                  <h3 className="text-sm font-semibold text-gray-700">
-                    Chat Conversation
-                  </h3>
-                  <span className="text-xs text-gray-500">
-                    ({entry.chatThread.length} message{entry.chatThread.length !== 1 ? 's' : ''})
-                  </span>
-                </div>
-                <button
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    setIsChatExpanded(false);
-                  }}
-                  className="p-1.5 hover:bg-gray-100 rounded-lg transition-colors -mt-1 -mr-1"
-                  title="Collapse"
-                >
-                  <HugeiconsIcon icon={Cancel01Icon} size={16} className="text-gray-400 hover:text-gray-600" />
-                </button>
-              </div>
-              
-              {/* Preview - Show first message when collapsed */}
+            <div className={`${isChatExpanded ? 'px-4 pb-4' : 'p-4'}`}>
+              {/* Preview - Show first 2 messages when collapsed */}
               {!isChatExpanded && (
-                <div className="space-y-2">
-                  {entry.chatThread.slice(0, 2).map((message, index) => (
-                    <div
-                      key={index}
-                      className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                    >
-                      <div
-                        className={`max-w-[85%] rounded-2xl px-3 py-2 ${
-                          message.role === 'user'
-                            ? 'bg-blue-600 text-white'
-                            : 'bg-gray-100 text-gray-900'
-                        }`}
-                      >
-                        <p className="text-xs whitespace-pre-wrap break-words line-clamp-2">
-                          {message.content}
-                        </p>
-                      </div>
-                    </div>
-                  ))}
-                  {entry.chatThread.length > 2 && (
-                    <p className="text-xs text-gray-400 text-center mt-2">
-                      +{entry.chatThread.length - 2} more message{entry.chatThread.length - 2 !== 1 ? 's' : ''}...
-                    </p>
-                  )}
-                </div>
-              )}
-              
-              {/* Expanded Chat Thread */}
-              <div 
-                className="overflow-hidden transition-all duration-500 ease-in-out"
-                style={{
-                  maxHeight: isChatExpanded ? 'none' : '0',
-                  opacity: isChatExpanded ? 1 : 0,
-                  marginTop: isChatExpanded ? '1rem' : '0',
-                }}
-              >
-                {isChatExpanded && (
-                  <div className="space-y-3 max-h-[calc(100vh-25rem)] overflow-y-auto">
-                    {entry.chatThread.map((message, index) => (
+                <div>
+                  {/* Chat name in collapsed state */}
+                  <h3 className="text-sm font-medium text-gray-900 mb-2">
+                    {chatName}
+                  </h3>
+                  <div className="space-y-2">
+                    {entry.chatThread.slice(0, 2).map((message, index) => (
                       <div
                         key={index}
                         className={`flex ${message.role === 'user' ? 'justify-end' : 'justify-start'}`}
                       >
                         <div
-                          className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
+                          className={`max-w-[85%] ${
                             message.role === 'user'
-                              ? 'bg-blue-600 text-white'
-                              : 'bg-gray-100 text-gray-900 border border-gray-200'
+                              ? 'inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full bg-blue-500/10 border border-blue-500/20'
+                              : 'bg-gray-50 text-gray-900 border border-gray-200 rounded-2xl px-4 py-2.5'
                           }`}
                         >
-                          <p className="text-sm whitespace-pre-wrap break-words">{message.content}</p>
+                          {message.role === 'user' ? (
+                            <p className="text-xs font-medium text-blue-700 whitespace-pre-wrap break-words line-clamp-2">
+                              {message.content}
+                            </p>
+                          ) : (
+                            <p className="text-sm whitespace-pre-wrap break-words line-clamp-2 leading-relaxed">
+                              {message.content}
+                            </p>
+                          )}
                         </div>
                       </div>
                     ))}
+                    {entry.chatThread.length > 2 && (
+                      <p className="text-xs text-gray-400 text-center mt-2">
+                        +{entry.chatThread.length - 2} more message{entry.chatThread.length - 2 !== 1 ? 's' : ''}...
+                      </p>
+                    )}
                   </div>
-                )}
-              </div>
+                </div>
+              )}
+              
+              {/* Expanded Chat Interface - Interactive when expanded, stays in place */}
+              {isChatExpanded && (
+                <div className="mt-4">
+                  <ChatInterface
+                    onSave={async () => {}}
+                    onCancel={() => {
+                      setIsChatExpanded(false);
+                      if (onChatActiveChange) {
+                        onChatActiveChange(false);
+                      }
+                    }}
+                    onCollapse={async () => {
+                      setIsChatExpanded(false);
+                      if (onChatActiveChange) {
+                        onChatActiveChange(false);
+                      }
+                    }}
+                    messages={entry.chatThread.map(m => ({
+                      role: m.role,
+                      content: m.content,
+                      timestamp: m.timestamp || Date.now(),
+                    }))}
+                    isSubmitting={false}
+                    readOnly={true}
+                    showCollapseButton={true}
+                    onCollapseClick={() => {
+                      setIsChatExpanded(false);
+                      if (onChatActiveChange) {
+                        onChatActiveChange(false);
+                      }
+                    }}
+                    chatName={chatName}
+                  />
+                  {/* Subtle notice that user is engaged in this conversation */}
+                  <p className="text-xs text-gray-400 text-center italic pt-1">
+                    Active conversation
+                  </p>
+                </div>
+              )}
             </div>
           </div>
         </div>
@@ -393,6 +632,10 @@ export const EntryCard: React.FC<EntryCardProps> = ({
               maxHeight: isExpanded ? 'calc(100vh - 20rem)' : 'none',
             }}
             onClick={(e) => {
+              handleClick(e);
+              if (justSwipedRef.current || isSwiping || Math.abs(swipeOffset) > 5) {
+                return;
+              }
               e.preventDefault();
               e.stopPropagation();
               setIsExpanded(prev => !prev);
@@ -594,19 +837,21 @@ export const EntryCard: React.FC<EntryCardProps> = ({
       )}
 
 
-      {/* Tags - Show for manual entries only (content entries show tags inside the card) */}
-      {isManual && entry.tags && entry.tags.length > 0 && (
-        <div className="flex flex-wrap items-center gap-2 mt-2">
-          {entry.tags.map((tag) => (
-            <span
-              key={tag}
-              className="text-xs text-gray-500"
-            >
-              #{tag}
-            </span>
-          ))}
+          {/* Tags - Show for manual entries only (content entries show tags inside the card) */}
+          {isManual && entry.tags && entry.tags.length > 0 && (
+            <div className="flex flex-wrap items-center gap-2 mt-2">
+              {entry.tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="text-xs text-gray-500"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
-      )}
+      </div>
     </div>
   );
 };

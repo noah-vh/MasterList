@@ -101,6 +101,12 @@ export const create = mutation({
       v.literal("SomedayMaybe"),
       v.literal("Archived")
     ),
+    priority: v.optional(v.union(
+      v.literal("Urgent"),
+      v.literal("High"),
+      v.literal("Medium"),
+      v.literal("Low")
+    )),
     createdAt: v.number(),
     actionDate: v.optional(v.string()),
     tags: v.array(v.string()),
@@ -128,6 +134,7 @@ export const create = mutation({
       title: args.title,
       isCompleted: args.isCompleted,
       status: args.status,
+      priority: args.priority,
       createdAt: args.createdAt,
       actionDate: args.actionDate,
       tags: args.tags,
@@ -162,6 +169,12 @@ export const update = mutation({
       v.literal("WaitingOn"),
       v.literal("SomedayMaybe"),
       v.literal("Archived")
+    )),
+    priority: v.optional(v.union(
+      v.literal("Urgent"),
+      v.literal("High"),
+      v.literal("Medium"),
+      v.literal("Low")
     )),
     actionDate: v.optional(v.string()),
     tags: v.optional(v.array(v.string())),

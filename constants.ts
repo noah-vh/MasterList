@@ -190,7 +190,7 @@ export const DEFAULT_FILTER_GROUPS: FilterGroup[] = [
 ];
 
 // Routine constants
-export const ROUTINE_BADGE_COLOR = 'bg-purple-100 text-purple-700';
+export const ROUTINE_BADGE_COLOR = 'bg-gray-100 text-gray-700';
 
 export const DAYS_OF_WEEK = [
   { value: 0, label: 'Sun' },
@@ -201,3 +201,10 @@ export const DAYS_OF_WEEK = [
   { value: 5, label: 'Fri' },
   { value: 6, label: 'Sat' },
 ];
+
+export const PRIORITY_COLORS: Record<string, string> = {
+  Urgent: 'bg-red-500',
+  High: 'bg-orange-500',
+  Medium: 'bg-yellow-500',
+  Low: 'bg-blue-500',
+};

@@ -1,17 +1,22 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { ArrowUp, X, Loader2, LayoutTemplate, CheckCircle2, ChevronRight, Plus, Calendar, Clock, Sparkles, PenTool } from 'lucide-react';
-import { useAction } from 'convex/react';
+import { HugeiconsIcon } from '@hugeicons/react';
+import { Message01Icon, Pen01Icon } from '@hugeicons/core-free-icons';
+import { useAction, useMutation, useQuery } from 'convex/react';
 import { api } from '../convex/_generated/api';
 import { AIResponse, ExtractedTaskData, GeneratedViewData } from '../types';
 import { TagInput } from './TagInput';
 import { getTagMetadata } from '../constants';
 import { TaskCreateModal } from './TaskCreateModal';
+import { ChatInterface } from './ChatInterface';
 
 interface SmartInputProps {
   onAddTask: (data: ExtractedTaskData) => void;
   onApplyView: (data: GeneratedViewData) => void;
+  onAddEntry?: (content: string) => Promise<void>; // For entries view
   defaultToRoutine?: boolean; // When true, default new tasks to be routines
   currentView?: 'entries' | 'today' | 'master' | 'routines' | 'timeline' | 'library'; // Current page context
+  activeChatEntryId?: string | null; // ID of the active chat entry to route messages to
 }
 
 const TIME_ESTIMATE_OPTIONS = [
@@ -29,8 +34,10 @@ const TIME_ESTIMATE_OPTIONS = [
 ];
 
 // Get contextual placeholder text based on current view
-const getPlaceholderText = (view: 'today' | 'master' | 'routines' | 'timeline' | 'library'): string => {
+const getPlaceholderText = (view: 'entries' | 'today' | 'master' | 'routines' | 'timeline' | 'library'): string => {
   switch (view) {
+    case 'entries':
+      return "Add an entry, paste a link, or upload an image...";
     case 'today':
       return "What needs to get done today?";
     case 'routines':
@@ -45,15 +52,29 @@ const getPlaceholderText = (view: 'today' | 'master' | 'routines' | 'timeline' |
   }
 };
 
-export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, defaultToRoutine = false, currentView = 'master' }) => {
+export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, onAddEntry, defaultToRoutine = false, currentView = 'master', activeChatEntryId }) => {
   const parseUserIntent = useAction(api.ai.parseUserIntent);
+  const analyzeContent = useAction(api.ai.analyzeContent);
+  const createContentEntry = useMutation(api.entries.createContentEntry);
+  const createChatEntry = useMutation(api.entries.createChatEntry);
+  const updateChatEntry = useMutation(api.entries.updateChatEntry);
+  const chatWithLLMForEntry = useAction(api.ai.chatWithLLM);
+  const entries = useQuery(api.entries.list);
+  
   const [input, setInput] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [aiResponse, setAiResponse] = useState<AIResponse | null>(null);
   const inputRef = useRef<HTMLInputElement>(null);
   const [isInstantMode, setIsInstantMode] = useState(false);
+  const [isChatMode, setIsChatMode] = useState(false); // For entries view
+  const [showChatInterface, setShowChatInterface] = useState(false);
+  const [chatMessages, setChatMessages] = useState<Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>>([]);
+  const [isChatSubmitting, setIsChatSubmitting] = useState(false);
+  const chatWithLLM = useAction(api.ai.chatWithLLM);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [modalInitialTitle, setModalInitialTitle] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [error, setError] = useState<string | null>(null);
 
   // Local state for editable task data
   const [editableTaskData, setEditableTaskData] = useState<ExtractedTaskData | null>(null);
@@ -169,10 +190,228 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
     }
   }, [aiResponse]);
 
+  // Entry-specific helpers (for entries view)
+  const isUrl = (text: string): boolean => {
+    const trimmed = text.trim();
+    try {
+      const url = new URL(trimmed);
+      return url.protocol === 'http:' || url.protocol === 'https:';
+    } catch {
+      const urlPattern = /^(www\.)?[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(\.[a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*(\.(com|org|net|edu|gov|io|co|ai|dev|app|xyz|id|me|tv|us|uk|ca|au|de|fr|jp|cn|in|br|ru|es|it|nl|se|no|dk|fi|pl|cz|ie|at|ch|be|pt|gr|tr|kr|tw|hk|sg|my|th|ph|vn|id|nz|za|mx|ar|cl|co|pe|ec|uy|py|bo|ve|cr|pa|do|gt|hn|ni|sv|bz|jm|tt|bb|gd|lc|vc|ag|dm|kn|ms|tc|vg|ai|aw|bm|bs|ky|fk|gi|gl|gp|gu|mp|mq|pr|re|sh|sj|pm|tf|um|vi|wf|yt|ax|ad|al|am|ao|aq|as|at|az|ba|bb|bd|bf|bg|bh|bi|bj|bl|bm|bn|bo|bq|br|bs|bt|bv|bw|by|bz|cc|cd|cf|cg|ch|ci|ck|cl|cm|cn|co|cr|cu|cv|cw|cx|cy|cz|de|dj|dk|dm|do|dz|ec|ee|eg|eh|er|es|et|fi|fj|fk|fm|fo|fr|ga|gb|gd|ge|gf|gg|gh|gi|gl|gm|gn|gp|gq|gr|gs|gt|gu|gw|gy|hk|hm|hn|hr|ht|hu|id|ie|il|im|in|io|iq|ir|is|it|je|jm|jo|jp|ke|kg|kh|ki|km|kn|kp|kr|kw|ky|kz|la|lb|lc|li|lk|lr|ls|lt|lu|lv|ly|ma|mc|md|me|mf|mg|mh|mk|ml|mm|mn|mo|mp|mq|mr|ms|mt|mu|mv|mw|mx|my|mz|na|nc|ne|nf|ng|ni|nl|no|np|nr|nu|nz|om|pa|pe|pf|pg|ph|pk|pl|pm|pn|pr|ps|pt|pw|py|qa|re|ro|rs|ru|rw|sa|sb|sc|sd|se|sg|sh|si|sj|sk|sl|sm|sn|so|sr|ss|st|sv|sx|sy|sz|tc|td|tf|tg|th|tj|tk|tl|tm|tn|to|tr|tt|tv|tw|tz|ua|ug|um|us|uy|uz|va|vc|ve|vg|vi|vn|vu|wf|ws|ye|yt|za|zm|zw))(\/.*)?$/i;
+      return urlPattern.test(trimmed) && !trimmed.includes(' ');
+    }
+  };
+
+  const normalizeUrl = (text: string): string => {
+    const trimmed = text.trim();
+    if (trimmed.startsWith('http://') || trimmed.startsWith('https://')) {
+      return trimmed;
+    }
+    return `https://${trimmed}`;
+  };
+
+  const handleChatSave = async (thread: Array<{ role: 'user' | 'assistant'; content: string; timestamp: number }>) => {
+    try {
+      const firstUserMessage = thread.find(m => m.role === 'user')?.content || 'Chat conversation';
+      const summary = thread.length > 0 
+        ? `${thread.length} message${thread.length > 1 ? 's' : ''} conversation`
+        : 'Chat conversation';
+
+      await createChatEntry({
+        chatThread: thread,
+        content: summary,
+      });
+
+      setShowChatInterface(false);
+      setChatMessages([]);
+      setInput('');
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    } catch (error) {
+      console.error('Failed to save chat:', error);
+      setError('Failed to save chat thread');
+      setTimeout(() => setError(null), 5000);
+    }
+  };
+
+  const handleSendChatMessage = async (messageText: string) => {
+    if (!messageText.trim() || isChatSubmitting) return;
+
+    const userMessage = {
+      role: 'user' as const,
+      content: messageText.trim(),
+      timestamp: Date.now(),
+    };
+
+    const updatedMessages = [...chatMessages, userMessage];
+    setChatMessages(updatedMessages);
+    setInput('');
+    setIsChatSubmitting(true);
+
+    try {
+      const conversationHistory = updatedMessages.map(m => ({
+        role: m.role,
+        content: m.content,
+      }));
+
+      const response = await chatWithLLM({
+        messages: conversationHistory,
+      });
+
+      const assistantMessage = {
+        role: 'assistant' as const,
+        content: response.content,
+        timestamp: Date.now(),
+      };
+
+      setChatMessages([...updatedMessages, assistantMessage]);
+    } catch (error) {
+      console.error('Chat error:', error);
+      const errorMessage = {
+        role: 'assistant' as const,
+        content: 'Sorry, I encountered an error. Please try again.',
+        timestamp: Date.now(),
+      };
+      setChatMessages([...updatedMessages, errorMessage]);
+    } finally {
+      setIsChatSubmitting(false);
+      if (inputRef.current) {
+        inputRef.current.focus();
+      }
+    }
+  };
+
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!input.trim()) return;
 
+    // Handle entries view differently
+    if (currentView === 'entries' && onAddEntry) {
+      const trimmedInput = input.trim();
+      
+      // If there's an active chat entry, route message to it
+      if (activeChatEntryId && entries) {
+        // Get current entry to update
+        const activeEntry = entries.find((e: any) => e._id === activeChatEntryId);
+        if (activeEntry && activeEntry.chatThread) {
+          const userMessage = {
+            role: 'user' as const,
+            content: trimmedInput,
+            timestamp: Date.now(),
+          };
+          
+          const updatedMessages = [...activeEntry.chatThread, userMessage];
+          
+          // Update entry immediately with user message
+          await updateChatEntry({
+            id: activeChatEntryId as any,
+            chatThread: updatedMessages,
+          });
+          
+          try {
+            // Get assistant response
+            const conversationHistory = updatedMessages.map(m => ({
+              role: m.role,
+              content: m.content,
+            }));
+            
+            const response = await chatWithLLMForEntry({
+              messages: conversationHistory,
+            });
+            
+            const assistantMessage = {
+              role: 'assistant' as const,
+              content: response.content,
+              timestamp: Date.now(),
+            };
+            
+            const finalMessages = [...updatedMessages, assistantMessage];
+            
+            // Update entry with assistant response
+            await updateChatEntry({
+              id: activeChatEntryId as any,
+              chatThread: finalMessages,
+            });
+          } catch (error) {
+            console.error('Chat error:', error);
+            const errorMessage = {
+              role: 'assistant' as const,
+              content: 'Sorry, I encountered an error. Please try again.',
+              timestamp: Date.now(),
+            };
+            await updateChatEntry({
+              id: activeChatEntryId as any,
+              chatThread: [...updatedMessages, errorMessage],
+            });
+          }
+          
+          setInput('');
+          return;
+        }
+      }
+      
+      // If in chat mode, send message to chat
+      if (isChatMode) {
+        if (!showChatInterface) {
+          // First message - initialize chat and send
+          setShowChatInterface(true);
+        }
+        await handleSendChatMessage(trimmedInput);
+        return;
+      }
+
+      setIsProcessing(true);
+      setIsAnalyzing(true);
+
+      try {
+        setError(null);
+        // Check if input is a URL
+        if (isUrl(trimmedInput)) {
+          const normalizedUrl = normalizeUrl(trimmedInput);
+          const analysis = await analyzeContent({
+            contentType: "link",
+            content: normalizedUrl,
+            originalInput: trimmedInput,
+          });
+
+          if (!analysis || !analysis.classification) {
+            throw new Error('Invalid analysis response from AI');
+          }
+
+          await createContentEntry({
+            contentType: "link",
+            sourceUrl: normalizedUrl,
+            content: trimmedInput,
+            analyzedContent: analysis.summary || '',
+            classification: analysis.classification,
+            tags: analysis.tags || [],
+            title: analysis.title || trimmedInput,
+            ogMetadata: analysis.ogMetadata,
+          });
+        } else {
+          // Regular text entry
+          await onAddEntry(trimmedInput);
+        }
+        
+        setInput('');
+        if (inputRef.current) {
+          inputRef.current.focus();
+        }
+      } catch (error) {
+        console.error('Failed to process entry:', error);
+        const errorMessage = error instanceof Error ? error.message : String(error);
+        setError(errorMessage);
+        setTimeout(() => setError(null), 5000);
+      } finally {
+        setIsProcessing(false);
+        setIsAnalyzing(false);
+      }
+      return;
+    }
+
+    // Handle task views (existing logic)
     // If instant mode is enabled, open the create modal directly
     if (isInstantMode) {
       const inputText = input.trim();
@@ -184,7 +423,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
 
     setIsProcessing(true);
     try {
-      const result = await parseUserIntent({ input, currentView });
+      const result = await parseUserIntent({ input, currentView: currentView === 'entries' ? 'master' : (currentView as 'today' | 'master' | 'routines' | 'timeline' | 'library') });
       setIsProcessing(false);
       
       if (result) {
@@ -739,7 +978,26 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
   );
 
   return (
-    <div className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none">
+    <>
+      {showChatInterface && currentView === 'entries' && (
+        <ChatInterface
+          onSave={handleChatSave}
+          onCancel={() => {
+            setShowChatInterface(false);
+            setChatMessages([]);
+            setInput('');
+          }}
+          onCollapse={async (thread) => {
+            await handleChatSave(thread);
+          }}
+          onSendMessage={handleSendChatMessage}
+          initialMessage={input.trim() || undefined}
+          messages={chatMessages}
+          isSubmitting={isChatSubmitting}
+        />
+      )}
+      
+      <div className="fixed bottom-0 left-0 right-0 z-20 pointer-events-none" data-allow-nav-swipe="true">
       {/* Gradient Fade Background */}
       <div 
         className="absolute inset-0 bg-[#F3F4F6]/60 backdrop-blur-xl border-t border-white/20"
@@ -749,7 +1007,7 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
         }}
       />
       
-      <div className="relative pb-6 pt-12 pointer-events-auto">
+      <div className="relative pb-6 pt-12 pointer-events-auto" data-allow-nav-swipe="true">
         <div className="max-w-2xl mx-auto relative px-3">
         
         {/* AI Confirmation Card */}
@@ -845,45 +1103,73 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
 
         {/* Main Input Bar */}
         <form onSubmit={handleSubmit} className="relative shadow-lg rounded-full group bg-white/70 backdrop-blur-md border border-white/50 hover:bg-white/80 transition-all">
-          {/* Instant Entry Toggle */}
-          <button
-            type="button"
-            onClick={() => setIsInstantMode(!isInstantMode)}
-            className={`
-              absolute left-2 top-2 bottom-2 aspect-square rounded-full flex items-center justify-center transition-all duration-300
-              ${isInstantMode 
-                ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' 
-                : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200 hover:text-gray-700'
-              }
-            `}
-            title={isInstantMode ? "Instant entry mode: Skip AI classification" : "Auto mode: AI classifies your input"}
-          >
-            <div className="relative w-5 h-5 flex items-center justify-center">
-              <PenTool 
-                className={`w-5 h-5 absolute transition-all duration-300 ${
-                  isInstantMode 
-                    ? 'opacity-100 scale-100 rotate-0' 
-                    : 'opacity-0 scale-75 rotate-90'
-                }`}
-              />
-              <Sparkles 
-                className={`w-5 h-5 absolute transition-all duration-300 ${
-                  !isInstantMode 
-                    ? 'opacity-100 scale-100 rotate-0' 
-                    : 'opacity-0 scale-75 -rotate-90'
-                }`}
-              />
-            </div>
-          </button>
+          {/* Toggle Button - Chat mode for entries, Instant mode for tasks */}
+          {currentView === 'entries' ? (
+            <>
+              {/* Chat/Manual Toggle for entries */}
+              <button
+                type="button"
+                onClick={() => setIsChatMode(!isChatMode)}
+                className={`
+                  absolute left-2 top-2 bottom-2 aspect-square rounded-full flex items-center justify-center transition-all duration-300
+                  ${isChatMode 
+                    ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' 
+                    : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200 hover:text-gray-700'
+                  }
+                `}
+                title={isChatMode ? "Chat mode: Start a conversation" : "Manual mode: Quick entry"}
+              >
+                <HugeiconsIcon icon={isChatMode ? Message01Icon : Pen01Icon} size={20} />
+              </button>
+              
+            </>
+          ) : (
+            /* Instant Entry Toggle for task views */
+            <button
+              type="button"
+              onClick={() => setIsInstantMode(!isInstantMode)}
+              className={`
+                absolute left-2 top-2 bottom-2 aspect-square rounded-full flex items-center justify-center transition-all duration-300
+                ${isInstantMode 
+                  ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' 
+                  : 'bg-gray-50 text-gray-500 hover:bg-gray-100 border border-gray-200 hover:text-gray-700'
+                }
+              `}
+              title={isInstantMode ? "Instant entry mode: Skip AI classification" : "Auto mode: AI classifies your input"}
+            >
+              <div className="relative w-5 h-5 flex items-center justify-center">
+                <PenTool 
+                  className={`w-5 h-5 absolute transition-all duration-300 ${
+                    isInstantMode 
+                      ? 'opacity-100 scale-100 rotate-0' 
+                      : 'opacity-0 scale-75 rotate-90'
+                  }`}
+                />
+                <Sparkles 
+                  className={`w-5 h-5 absolute transition-all duration-300 ${
+                    !isInstantMode 
+                      ? 'opacity-100 scale-100 rotate-0' 
+                      : 'opacity-0 scale-75 -rotate-90'
+                  }`}
+                />
+              </div>
+            </button>
+          )}
           
           <input
             ref={inputRef}
             type="text"
             value={input}
             onChange={(e) => setInput(e.target.value)}
-            placeholder={getPlaceholderText(currentView)}
-            disabled={isProcessing || !!aiResponse}
-            className="w-full pl-14 pr-14 py-4 rounded-full border-none focus:ring-2 focus:ring-blue-500/20 outline-none text-base text-gray-800 placeholder-gray-500 bg-transparent disabled:text-gray-400 transition-all"
+            placeholder={
+              currentView === 'entries' && activeChatEntryId 
+                ? "Type your message to continue the conversation..." 
+                : currentView === 'entries' && (isChatMode || showChatInterface) 
+                  ? "Type your message..." 
+                  : getPlaceholderText(currentView === 'entries' ? 'master' : (currentView as 'today' | 'master' | 'routines' | 'timeline' | 'library'))
+            }
+            disabled={(isProcessing || isAnalyzing || !!aiResponse) || (currentView === 'entries' && showChatInterface && isChatSubmitting)}
+            className={`w-full ${currentView === 'entries' && !isChatMode ? 'pl-14' : 'pl-14'} pr-14 py-4 rounded-full border-none focus:ring-2 focus:ring-blue-500/20 outline-none text-base text-gray-800 placeholder-gray-500 bg-transparent disabled:text-gray-400 transition-all`}
             autoComplete="off"
             autoCorrect="off"
             autoCapitalize="off"
@@ -893,19 +1179,30 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
           
           <button
             type="submit"
-            disabled={!input.trim() || isProcessing || !!aiResponse}
+            disabled={!input.trim() || isProcessing || isAnalyzing || !!aiResponse || (currentView === 'entries' && showChatInterface && isChatSubmitting)}
             className={`
               absolute right-2 top-2 bottom-2 aspect-square rounded-full flex items-center justify-center transition-all duration-200
-              ${input.trim() && !isProcessing && !aiResponse ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}
+              ${input.trim() && !isProcessing && !isAnalyzing && !aiResponse && !(currentView === 'entries' && showChatInterface && isChatSubmitting) ? 'bg-blue-50 text-blue-700 hover:bg-blue-100 border border-blue-200' : 'bg-gray-100 text-gray-400 cursor-not-allowed'}
             `}
           >
-            {isProcessing ? (
+            {(isProcessing || isAnalyzing) ? (
                 <Loader2 className="w-5 h-5 animate-spin" />
             ) : (
                 <ArrowUp className="w-5 h-5" />
             )}
           </button>
         </form>
+        
+        {/* Status messages */}
+        <div className="text-xs mt-1 px-4">
+          {error ? (
+            <span className="text-red-500">Error: {error}</span>
+          ) : isAnalyzing ? (
+            <span className="text-blue-500">Analyzing content...</span>
+          ) : currentView === 'entries' && isChatMode ? (
+            <span className="text-gray-400">Press Enter to start a conversation</span>
+          ) : null}
+        </div>
         
         {/* Task Create Modal */}
         {showCreateModal && (
@@ -919,5 +1216,6 @@ export const SmartInput: React.FC<SmartInputProps> = ({ onAddTask, onApplyView, 
       </div>
       </div>
     </div>
+    </>
   );
 };

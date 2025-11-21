@@ -6,6 +6,13 @@ export enum TaskStatus {
   Archived = 'Archived',
 }
 
+export enum Priority {
+  Urgent = 'Urgent',
+  High = 'High',
+  Medium = 'Medium',
+  Low = 'Low',
+}
+
 export enum Area {
   Professional = 'Professional',
   Personal = 'Personal',
@@ -33,6 +40,7 @@ export interface Task {
   
   // Layer 1: Anchors
   status: TaskStatus;
+  priority?: Priority; // New priority field
   createdAt: number;
   actionDate?: string; // When to see the task (replaces dueDate concept) - ISO date string YYYY-MM-DD
   
@@ -105,7 +113,8 @@ export interface ExtractedTaskData {
   energy?: EnergyLevel;
   location?: LocationContext;
   type?: 'Task' | 'Project' | 'Idea';
-  isUrgent?: boolean;
+  isUrgent?: boolean; // This will be mapped to Priority.Urgent
+  priority?: Priority; // Explicit priority
 
   // Enhanced metadata
   timeEstimate?: string;

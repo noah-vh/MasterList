@@ -11,6 +11,12 @@ export default defineSchema({
       v.literal("SomedayMaybe"),
       v.literal("Archived")
     ),
+    priority: v.optional(v.union(
+      v.literal("Urgent"),
+      v.literal("High"),
+      v.literal("Medium"),
+      v.literal("Low")
+    )),
     createdAt: v.number(),
     actionDate: v.optional(v.string()),
     tags: v.array(v.string()),
@@ -34,6 +40,7 @@ export default defineSchema({
     isRoutine: v.optional(v.boolean()),
   })
     .index("by_status", ["status"])
+    .index("by_priority", ["priority"])
     .index("by_actionDate", ["actionDate"])
     .index("by_createdAt", ["createdAt"])
     .index("by_parentTaskId", ["parentTaskId"])

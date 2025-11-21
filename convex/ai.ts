@@ -876,6 +876,92 @@ export const chatWithLLM = action({
   },
 });
 
+// Action: Generate a title for a chat conversation based on the first few messages
+export const generateChatTitle = action({
+  args: {
+    messages: v.array(v.object({
+      role: v.union(v.literal("user"), v.literal("assistant")),
+      content: v.string(),
+    })),
+  },
+  handler: async (ctx, args) => {
+    const apiKey = process.env.OPENROUTER_API_KEY;
+    if (!apiKey) {
+      console.error("OPENROUTER_API_KEY is missing");
+      return "Chat conversation";
+    }
+
+    const model = process.env.OPENROUTER_MODEL || "anthropic/claude-3.5-sonnet";
+
+    // Take first 3-4 messages to understand the conversation topic
+    const conversationSample = args.messages.slice(0, 4);
+    
+    if (conversationSample.length === 0) {
+      return "Chat conversation";
+    }
+
+    try {
+      const response = await fetch("https://openrouter.ai/api/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${apiKey}`,
+          "HTTP-Referer": process.env.CONVEX_SITE_URL || "",
+          "X-Title": "Master List",
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            {
+              role: "system",
+              content: `You are a helpful assistant that generates concise, descriptive titles for chat conversations.
+
+Based on the first few messages of a conversation, generate a short title (3-8 words) that captures what the conversation is about.
+
+Rules:
+- Be concise and specific
+- Focus on the main topic or question being discussed
+- Use natural language, not formal titles
+- If the conversation is just starting or unclear, use a generic title like "Chat conversation"
+- Return ONLY the title text, nothing else
+
+Examples:
+- "How to improve productivity" → "Productivity tips"
+- "I'm feeling stressed about work" → "Work stress discussion"
+- "Can you help me plan a trip?" → "Trip planning"
+- "What's the weather like?" → "Weather inquiry"`,
+            },
+            {
+              role: "user",
+              content: `Generate a title for this conversation:\n\n${conversationSample.map(m => `${m.role}: ${m.content}`).join('\n\n')}`,
+            },
+          ],
+          temperature: 0.7,
+          max_tokens: 50,
+        }),
+      });
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error("OpenRouter API error:", errorText);
+        return "Chat conversation";
+      }
+
+      const data = await response.json();
+      const title = data.choices?.[0]?.message?.content?.trim();
+      
+      if (title && title.length > 0 && title.length < 100) {
+        return title;
+      }
+      
+      return "Chat conversation";
+    } catch (error) {
+      console.error("Error generating chat title:", error);
+      return "Chat conversation";
+    }
+  },
+});
+
 // Helper function to extract Open Graph metadata from HTML
 function extractOGMetadata(html: string): {
   title?: string;
