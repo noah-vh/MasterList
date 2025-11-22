@@ -1,6 +1,7 @@
 import { query, mutation, internalQuery } from "./_generated/server";
 import { v } from "convex/values";
 import { internal } from "./_generated/api";
+import { getCurrentUserId, getCurrentUserIdOrNull, userIdMatches } from "./authHelpers";
 
 // Model information with pricing
 export interface ModelInfo {
@@ -8,13 +9,6 @@ export interface ModelInfo {
   name: string;
   pricing?: string; // e.g., "$0.003/1M tokens" or "Free"
   category?: "premium" | "standard" | "budget" | "free";
-}
-
-// Helper to get current user ID (placeholder until auth is implemented)
-function getCurrentUserId(): string {
-  // TODO: Replace with actual auth when implemented
-  // For now, return "default" as placeholder
-  return "default";
 }
 
 // Helper to get default model for each function type
@@ -70,8 +64,12 @@ export function getAvailableModels(): ModelInfo[] {
 
 // Query: Get user settings
 export const getUserSettings = query({
-  handler: async (ctx) => {
-    const userId = getCurrentUserId();
+  args: { token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getCurrentUserIdOrNull(ctx, args.token ?? null);
+    if (!userId) {
+      return null;
+    }
     const settings = await ctx.db
       .query("userSettings")
       .withIndex("by_userId", (q) => q.eq("userId", userId))
@@ -97,15 +95,16 @@ export const updateUserSettings = mutation({
     modelChatTitle: v.optional(v.string()),
     modelContentAnalysisText: v.optional(v.string()),
     modelContentAnalysisImage: v.optional(v.string()),
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const userId = getCurrentUserId();
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
     
-    // Find existing settings
-    const existing = await ctx.db
+    // Find existing settings - get all and filter by userId (handles both string and ID types)
+    const allSettings = await ctx.db
       .query("userSettings")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
-      .first();
+      .collect();
+    const existing = allSettings.find(setting => userIdMatches(setting.userId, userId));
     
     const now = Date.now();
     const updates: any = {
@@ -137,9 +136,9 @@ export const updateUserSettings = mutation({
       await ctx.db.patch(existing._id, updates);
       return existing._id;
     } else {
-      // Create new settings
+      // Create new settings - userId is already a string from getCurrentUserId
       const newSettings = {
-        userId,
+        userId: userId as any,
         createdAt: now,
         ...updates,
       };
@@ -149,12 +148,14 @@ export const updateUserSettings = mutation({
 });
 
 // Internal query to get user settings (called from actions)
+// Note: This is called from actions, so we need to get userId from the action context
+// We'll need to pass userId as an argument or get it from the action context
 export const internalGetUserSettings = internalQuery({
-  handler: async (ctx) => {
-    const userId = getCurrentUserId();
+  args: { userId: v.id("users") },
+  handler: async (ctx, args) => {
     const settings = await ctx.db
       .query("userSettings")
-      .withIndex("by_userId", (q) => q.eq("userId", userId))
+      .withIndex("by_userId", (q) => q.eq("userId", args.userId))
       .first();
     
     return settings;
@@ -163,8 +164,17 @@ export const internalGetUserSettings = internalQuery({
 
 // Helper function to get user's API key (with fallback to env var)
 // This must be called from an action context
-export async function getUserApiKey(ctx: { runQuery: (query: any, ...args: any[]) => Promise<any> }): Promise<string | null> {
-  const settings = await ctx.runQuery(internal.settings.internalGetUserSettings);
+export async function getUserApiKey(ctx: { runQuery: (query: any, ...args: any[]) => Promise<any>; auth?: any }): Promise<string | null> {
+  // Get userId from action context
+  const { getAuthUserId } = await import("@convex-dev/auth/server");
+  const userId = await getAuthUserId(ctx as any);
+  
+  if (!userId) {
+    // Fallback to environment variable if not authenticated
+    return process.env.OPENROUTER_API_KEY || null;
+  }
+  
+  const settings = await ctx.runQuery(internal.settings.internalGetUserSettings, { userId });
   
   if (settings?.openRouterApiKey) {
     return settings.openRouterApiKey;
@@ -177,29 +187,38 @@ export async function getUserApiKey(ctx: { runQuery: (query: any, ...args: any[]
 // Helper function to get model for a specific function (with fallback to env var or default)
 // This must be called from an action context
 export async function getUserModel(
-  ctx: { runQuery: (query: any, ...args: any[]) => Promise<any> },
+  ctx: { runQuery: (query: any, ...args: any[]) => Promise<any>; auth?: any },
   functionType: "taskClassification" | "chat" | "chatTitle" | "contentAnalysisText" | "contentAnalysisImage"
 ): Promise<string> {
-  const settings = await ctx.runQuery(internal.settings.internalGetUserSettings);
+  // Get userId from action context
+  const { getAuthUserId } = await import("@convex-dev/auth/server");
+  const userId = await getAuthUserId(ctx as any);
+  
+  let settings = null;
+  if (userId) {
+    settings = await ctx.runQuery(internal.settings.internalGetUserSettings, { userId });
+  }
   
   let model: string | undefined;
   
-  switch (functionType) {
-    case "taskClassification":
-      model = settings?.modelTaskClassification;
-      break;
-    case "chat":
-      model = settings?.modelChat;
-      break;
-    case "chatTitle":
-      model = settings?.modelChatTitle;
-      break;
-    case "contentAnalysisText":
-      model = settings?.modelContentAnalysisText;
-      break;
-    case "contentAnalysisImage":
-      model = settings?.modelContentAnalysisImage;
-      break;
+  if (settings) {
+    switch (functionType) {
+      case "taskClassification":
+        model = settings.modelTaskClassification;
+        break;
+      case "chat":
+        model = settings.modelChat;
+        break;
+      case "chatTitle":
+        model = settings.modelChatTitle;
+        break;
+      case "contentAnalysisText":
+        model = settings.modelContentAnalysisText;
+        break;
+      case "contentAnalysisImage":
+        model = settings.modelContentAnalysisImage;
+        break;
+    }
   }
   
   if (model) {

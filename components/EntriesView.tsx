@@ -15,6 +15,7 @@ interface EntriesViewProps {
   activeChatEntryId?: string | null;
   onActiveChatChange?: (entryId: string | null) => void;
   searchQuery?: string;
+  token?: string | null;
 }
 
 // Helper to convert Convex entry to frontend Entry type
@@ -88,9 +89,10 @@ export const EntriesView: React.FC<EntriesViewProps> = ({
   activeChatEntryId,
   onActiveChatChange,
   searchQuery = '',
+  token,
 }) => {
   // All hooks must be called at the top, before any conditional returns
-  const entries = useQuery(api.entries.list);
+  const entries = useQuery(api.entries.list, token ? { token } : "skip");
   const createEntry = useMutation(api.entries.create);
   const updateEntry = useMutation(api.entries.update);
   const updateContentEntry = useMutation(api.entries.updateContentEntry);

@@ -1,5 +1,5 @@
 import React, { useState, useMemo, useRef, useEffect } from 'react';
-import { Search, Bell, Menu, Settings } from 'lucide-react';
+import { Search, Bell, Menu, Settings, LogOut } from 'lucide-react';
 import { useQuery, useMutation } from 'convex/react';
 import { api } from './convex/_generated/api';
 import { Id } from './convex/_generated/dataModel';
@@ -14,6 +14,7 @@ import { EntriesView } from './components/EntriesView';
 import { LibraryView } from './components/LibraryView';
 import { ErrorBoundary } from './components/ErrorBoundary';
 import { SettingsDialog } from './components/SettingsDialog';
+import { LoginForm, getAuthToken, clearAuthToken } from './components/auth/LoginForm';
 import { motion, AnimatePresence } from 'framer-motion';
 
 // Helper to convert Convex task to frontend Task type
@@ -39,10 +40,21 @@ const convexTaskToTask = (convexTask: any): Task => {
 };
 
 const App: React.FC = () => {
-  const convexTasks = useQuery(api.tasks.list) ?? [];
-  const routinesData = useQuery(api.routines.list) ?? [];
-  const templates = useQuery(api.timeBlocks.listTemplates) ?? [];
-  const defaultTemplate = useQuery(api.timeBlocks.getDefaultTemplate);
+  const token = getAuthToken();
+  const currentUser = useQuery(api.auth.getCurrentUser, token ? { token } : "skip");
+  const signOutMutation = useMutation(api.auth.signOut);
+  const migrateData = useMutation(api.migrations.migrateExistingDataToUser);
+  const [hasMigrated, setHasMigrated] = useState(false);
+  const [migrationChecked, setMigrationChecked] = useState(false);
+
+  // All hooks must be called before any conditional returns
+  // Use "skip" for queries when not authenticated
+  const isAuthenticated = !!(token && currentUser);
+  
+  const convexTasks = useQuery(api.tasks.list, isAuthenticated ? { token: token! } : "skip") ?? [];
+  const routinesData = useQuery(api.routines.list, isAuthenticated ? { token: token! } : "skip") ?? [];
+  const templates = useQuery(api.timeBlocks.listTemplates, isAuthenticated ? { token: token! } : "skip") ?? [];
+  const defaultTemplate = useQuery(api.timeBlocks.getDefaultTemplate, isAuthenticated ? { token: token! } : "skip");
   const createTemplate = useMutation(api.timeBlocks.createTemplate);
   
   // Merge tasks with routine data
@@ -104,6 +116,7 @@ const App: React.FC = () => {
   // Swipe navigation state
   const swipeStartX = useRef<number | null>(null);
   const swipeStartY = useRef<number | null>(null);
+  const gestureLockRef = useRef<'horizontal' | 'vertical' | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
   
   // Scroll position tracking for each view
@@ -122,17 +135,52 @@ const App: React.FC = () => {
     library: 0
   });
   
+  // Check if we need to migrate data on first login
+  // Allow re-running migration by checking localStorage
+  useEffect(() => {
+    if (currentUser && token) {
+      const lastMigration = localStorage.getItem('lastMigrationRun');
+      const shouldRunMigration = !migrationChecked || 
+        (lastMigration && Date.now() - parseInt(lastMigration) > 60000); // Allow re-run after 1 minute
+      
+      if (shouldRunMigration) {
+        setMigrationChecked(true);
+        // Run migration in the background
+        migrateData({ token }).then((result) => {
+          console.log('Migration completed:', result);
+          setHasMigrated(true);
+          localStorage.setItem('lastMigrationRun', Date.now().toString());
+        }).catch((err) => {
+          console.error('Migration error:', err);
+          setHasMigrated(true);
+        });
+      }
+    }
+  }, [currentUser, migrationChecked, migrateData, token]);
+
   // Set default template on mount, create one if none exists
   useEffect(() => {
     if (defaultTemplate && !selectedTemplateId) {
       setSelectedTemplateId(defaultTemplate._id);
-    } else if (!defaultTemplate && templates.length === 0 && currentView === 'timeline') {
+    } else if (!defaultTemplate && templates.length === 0 && currentView === 'timeline' && isAuthenticated) {
       // Create default template if none exists and we're on timeline view
-      createTemplate({ name: 'Default' }).then((templateId) => {
+      createTemplate({ name: 'Default', token: token! }).then((templateId) => {
         setSelectedTemplateId(templateId);
       });
     }
-  }, [defaultTemplate, selectedTemplateId, templates.length, currentView, createTemplate]);
+  }, [defaultTemplate, selectedTemplateId, templates.length, currentView, createTemplate, isAuthenticated, token]);
+  
+  const handleSignOut = async () => {
+    if (token) {
+      try {
+        await signOutMutation({ token });
+      } catch (err) {
+        console.error('Sign out error:', err);
+      }
+    }
+    clearAuthToken();
+    window.location.reload();
+  };
 
 // Shared spring transition for unified feel
 const SPRING_TRANSITION = {
@@ -365,7 +413,7 @@ const SPRING_TRANSITION = {
   }, [tasks, filters, currentView, showRoutinesFilter, searchQuery]);
 
   const handleToggleTask = async (id: string) => {
-    await toggleTask({ id: id as Id<"tasks"> });
+    await toggleTask({ id: id as Id<"tasks">, token: token! });
   };
 
   const handleAddTask = async (data: ExtractedTaskData) => {
@@ -390,7 +438,7 @@ const SPRING_TRANSITION = {
       };
       
       console.log("Creating task with data:", taskData);
-      const taskId = await createTask(taskData);
+      const taskId = await createTask({ ...taskData, token: token! });
       console.log("Task created with ID:", taskId);
     } catch (error) {
       console.error("Error in handleAddTask:", error);
@@ -400,6 +448,7 @@ const SPRING_TRANSITION = {
 
   const handleAddProjectWithSubtasks = async (parentData: ExtractedTaskData, childrenData: ExtractedTaskData[]) => {
     await createWithSubtasks({
+      token: token!,
       parent: {
         title: parentData.title,
         status: parentData.status || TaskStatus.Active,
@@ -466,11 +515,12 @@ const SPRING_TRANSITION = {
       source: updatedTask.source,
       linkedTasks: updatedTask.linkedTasks,
       isRoutine: updatedTask.isRoutine,
+      token: token!,
     });
   };
 
   const handleDeleteTask = async (id: string) => {
-    await deleteTask({ id: id as Id<"tasks"> });
+    await deleteTask({ id: id as Id<"tasks">, token: token! });
     setSelectedTaskId(null);
   };
 
@@ -478,19 +528,49 @@ const SPRING_TRANSITION = {
   const startNavSwipe = (clientX: number, clientY: number) => {
     swipeStartX.current = clientX;
     swipeStartY.current = clientY;
+    gestureLockRef.current = null; // Reset gesture lock on new touch
   };
 
   const updateNavSwipe = (clientX: number, clientY: number) => {
-    if (swipeStartX.current === null || swipeStartY.current === null) return;
+    if (swipeStartX.current === null || swipeStartY.current === null) return false;
     
     const deltaX = clientX - swipeStartX.current;
     const deltaY = clientY - swipeStartY.current;
+    const absDeltaX = Math.abs(deltaX);
+    const absDeltaY = Math.abs(deltaY);
     
-    // Only handle horizontal swipes (more horizontal than vertical)
-    if (Math.abs(deltaX) > Math.abs(deltaY) && Math.abs(deltaX) > 20) {
-      return true; // Indicates horizontal swipe
+    // If already locked to vertical, allow scrolling
+    if (gestureLockRef.current === 'vertical') {
+      return false;
     }
-    return false;
+    
+    // If already locked to horizontal, prevent scrolling
+    if (gestureLockRef.current === 'horizontal') {
+      return true;
+    }
+    
+    // Need minimum movement before making decision
+    const MIN_MOVEMENT = 10; // Lower threshold to detect earlier
+    
+    if (absDeltaX < MIN_MOVEMENT && absDeltaY < MIN_MOVEMENT) {
+      // Too early - prevent default to give horizontal swipe a chance
+      return true; // Prevent scroll until we know the direction
+    }
+    
+    // Check if clearly vertical (vertical is 2x horizontal)
+    if (absDeltaY > absDeltaX * 2 && absDeltaY >= 15) {
+      gestureLockRef.current = 'vertical';
+      return false; // Allow vertical scrolling
+    }
+    
+    // If there's any significant horizontal movement, lock to horizontal
+    if (absDeltaX >= MIN_MOVEMENT) {
+      gestureLockRef.current = 'horizontal';
+      return true; // Prevent scrolling
+    }
+    
+    // Default: prevent scroll until direction is clear
+    return true;
   };
 
   const endNavSwipe = (clientX: number, clientY: number) => {
@@ -543,6 +623,7 @@ const SPRING_TRANSITION = {
     
     swipeStartX.current = null;
     swipeStartY.current = null;
+    gestureLockRef.current = null; // Reset gesture lock
   };
 
   const handleTouchStart = (e: React.TouchEvent) => {
@@ -758,6 +839,11 @@ const SPRING_TRANSITION = {
       hasFilters: filters.tags.length > 0 || filters.status.length > 0 || filters.dateScope !== 'All',
     };
   }, [filteredTasks, filters]);
+
+  // Show login form if not authenticated
+  if (!isAuthenticated) {
+    return <LoginForm />;
+  }
 
   return (
     <div 
@@ -1194,6 +1280,13 @@ const SPRING_TRANSITION = {
               >
                 <Settings className="w-6 h-6" />
               </button>
+              <button 
+                onClick={handleSignOut}
+                className="hover:text-gray-900 transition-colors relative flex-shrink-0"
+                title="Sign Out"
+              >
+                <LogOut className="w-6 h-6" />
+              </button>
               <button className="hover:text-gray-900 transition-colors relative flex-shrink-0">
                 <Bell className="w-6 h-6" />
                 <span className="absolute top-0 right-0 w-2.5 h-2.5 bg-red-500 border-2 border-[#F3F4F6] rounded-full"></span>
@@ -1288,6 +1381,7 @@ const SPRING_TRANSITION = {
                 onToggleTask={handleToggleTask}
                 scrollRef={libraryScrollRef}
                 searchQuery={currentView === 'library' ? searchQuery : ''}
+                token={token}
               />
             </ErrorBoundary>
           </div>
@@ -1304,6 +1398,7 @@ const SPRING_TRANSITION = {
                 activeChatEntryId={activeChatEntryId}
                 onActiveChatChange={setActiveChatEntryId}
                 searchQuery={currentView === 'entries' ? searchQuery : ''}
+                token={token}
               />
             </ErrorBoundary>
           </div>
@@ -1403,7 +1498,7 @@ const SPRING_TRANSITION = {
         onAddTask={handleAddTask} 
         onApplyView={handleApplyView}
         onAddEntry={currentView === 'entries' ? async (content: string) => {
-          await createEntry({ content });
+          await createEntry({ content, token: token! });
         } : undefined}
         defaultToRoutine={currentView === 'routines'}
         currentView={currentView}

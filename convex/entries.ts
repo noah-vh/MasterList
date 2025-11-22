@@ -1,6 +1,7 @@
 import { query, mutation, action } from "./_generated/server";
 import { v } from "convex/values";
 import { api } from "./_generated/api";
+import { getCurrentUserId, getCurrentUserIdOrNull, userIdMatches } from "./authHelpers";
 
 // Query: Get storage URL for an image
 export const getImageUrl = query({
@@ -12,12 +13,34 @@ export const getImageUrl = query({
 
 // Query: Get all entries, chronological (oldest first, newest last)
 export const list = query({
-  handler: async (ctx) => {
-    return await ctx.db
+  args: { token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getCurrentUserIdOrNull(ctx, args.token ?? null);
+    if (!userId) {
+      return [];
+    }
+    // Get all entries and filter by userId (handles both string and ID types)
+    const allEntries = await ctx.db
       .query("entries")
       .withIndex("by_createdAt")
       .order("asc") // Oldest first for chat-like display
       .collect();
+    
+    // Filter entries that belong to this user
+    const filtered = allEntries.filter(entry => userIdMatches(entry.userId, userId));
+    
+    // Debug logging (remove in production)
+    if (allEntries.length > 0 && filtered.length !== allEntries.length) {
+      console.log(`[entries.list] Filtered ${allEntries.length} entries to ${filtered.length} for userId: ${userId}`);
+      console.log(`[entries.list] Sample entry userIds:`, allEntries.slice(0, 3).map(e => ({
+        entryId: e._id,
+        userId: e.userId,
+        userIdType: typeof e.userId,
+        matches: userIdMatches(e.userId, userId)
+      })));
+    }
+    
+    return filtered;
   },
 });
 
@@ -26,15 +49,22 @@ export const getByDateRange = query({
   args: {
     start: v.number(),
     end: v.number(),
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    return await ctx.db
+    const userId = await getCurrentUserIdOrNull(ctx, args.token ?? null);
+    if (!userId) {
+      return [];
+    }
+    const entries = await ctx.db
       .query("entries")
       .withIndex("by_createdAt", (q) => 
         q.gte("createdAt", args.start).lte("createdAt", args.end)
       )
       .order("desc")
       .collect();
+    // Filter by userId (no composite index, so filter in memory)
+    return entries.filter(entry => userIdMatches(entry.userId, userId));
   },
 });
 
@@ -44,10 +74,14 @@ export const create = mutation({
     content: v.string(),
     linkedTaskIds: v.optional(v.array(v.id("tasks"))),
     tags: v.optional(v.array(v.string())),
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    // userId is already a string from getCurrentUserId
     const now = Date.now();
     return await ctx.db.insert("entries", {
+      userId: userId as any,
       content: args.content,
       createdAt: now,
       updatedAt: now,
@@ -74,6 +108,14 @@ export const createActivityLog = mutation({
     if (!task) {
       throw new Error("Task not found");
     }
+    
+    // Use the task's userId for the activity log, convert to string
+    const taskUserId = task.userId;
+    if (!taskUserId) {
+      throw new Error("Task has no userId");
+    }
+    // Convert to string - handle both string and Id<"users"> types
+    const userIdString = typeof taskUserId === "string" ? taskUserId : (taskUserId as { toString(): string }).toString();
 
     // Generate content based on activity type
     let content = "";
@@ -87,6 +129,7 @@ export const createActivityLog = mutation({
 
     const now = Date.now();
     return await ctx.db.insert("entries", {
+      userId: userIdString as any,
       content,
       createdAt: now,
       updatedAt: now,
@@ -102,8 +145,20 @@ export const update = mutation({
   args: {
     id: v.id("entries"),
     content: v.string(),
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    const entry = await ctx.db.get(args.id);
+    if (!entry) {
+      throw new Error("Entry not found");
+    }
+    
+    // Ensure user owns this entry
+    if (!userIdMatches(entry.userId, userId)) {
+      throw new Error("Unauthorized");
+    }
+    
     await ctx.db.patch(args.id, {
       content: args.content,
       updatedAt: Date.now(),
@@ -122,8 +177,20 @@ export const updateContentEntry = mutation({
       keyPoints: v.array(v.string()),
       lessons: v.array(v.string()),
     }),
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    const entry = await ctx.db.get(args.id);
+    if (!entry) {
+      throw new Error("Entry not found");
+    }
+    
+    // Ensure user owns this entry
+    if (!userIdMatches(entry.userId, userId)) {
+      throw new Error("Unauthorized");
+    }
+    
     await ctx.db.patch(args.id, {
       classification: args.classification,
       updatedAt: Date.now(),
@@ -134,8 +201,19 @@ export const updateContentEntry = mutation({
 
 // Mutation: Delete entry
 export const deleteEntry = mutation({
-  args: { id: v.id("entries") },
+  args: { id: v.id("entries"), token: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    const entry = await ctx.db.get(args.id);
+    if (!entry) {
+      throw new Error("Entry not found");
+    }
+    
+    // Ensure user owns this entry
+    if (!userIdMatches(entry.userId, userId)) {
+      throw new Error("Unauthorized");
+    }
+    
     await ctx.db.delete(args.id);
     return args.id;
   },
@@ -157,10 +235,14 @@ export const createChatEntry = mutation({
       timestamp: v.number(),
     })),
     content: v.string(), // Summary or first message
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    // userId is already a string from getCurrentUserId
     const now = Date.now();
     return await ctx.db.insert("entries", {
+      userId: userId as any,
       content: args.content,
       createdAt: now,
       updatedAt: now,
@@ -181,8 +263,20 @@ export const updateChatEntry = mutation({
       timestamp: v.number(),
     })),
     content: v.optional(v.string()), // Optional updated summary
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    const entry = await ctx.db.get(args.id);
+    if (!entry) {
+      throw new Error("Entry not found");
+    }
+    
+    // Ensure user owns this entry
+    if (!userIdMatches(entry.userId, userId)) {
+      throw new Error("Unauthorized");
+    }
+    
     const updateData: any = {
       chatThread: args.chatThread,
       updatedAt: Date.now(),
@@ -223,10 +317,14 @@ export const createContentEntry = mutation({
       image: v.optional(v.string()),
       siteName: v.optional(v.string()),
     })),
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    // userId is already a string from getCurrentUserId
     const now = Date.now();
     return await ctx.db.insert("entries", {
+      userId: userId as any,
       content: args.content,
       createdAt: now,
       updatedAt: now,

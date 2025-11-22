@@ -9,7 +9,13 @@
  */
 
 import type * as ai from "../ai.js";
+import type * as auth from "../auth.js";
+import type * as authHelpers from "../authHelpers.js";
+import type * as cleanupAuth from "../cleanupAuth.js";
+import type * as debug from "../debug.js";
 import type * as entries from "../entries.js";
+import type * as http from "../http.js";
+import type * as migrations from "../migrations.js";
 import type * as routines from "../routines.js";
 import type * as settings from "../settings.js";
 import type * as tasks from "../tasks.js";
@@ -23,7 +29,13 @@ import type {
 
 declare const fullApi: ApiFromModules<{
   ai: typeof ai;
+  auth: typeof auth;
+  authHelpers: typeof authHelpers;
+  cleanupAuth: typeof cleanupAuth;
+  debug: typeof debug;
   entries: typeof entries;
+  http: typeof http;
+  migrations: typeof migrations;
   routines: typeof routines;
   settings: typeof settings;
   tasks: typeof tasks;

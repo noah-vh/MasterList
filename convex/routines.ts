@@ -1,5 +1,6 @@
 import { query, mutation } from "./_generated/server";
 import { v } from "convex/values";
+import { getCurrentUserId, getCurrentUserIdOrNull, userIdMatches } from "./authHelpers";
 
 // Helper function to get today's date as ISO string (YYYY-MM-DD)
 function getTodayISO(): string {
@@ -67,8 +68,15 @@ function calculateStreak(completionHistory: string[]): { current: number; longes
 
 // Query: Get routine config for a specific task
 export const getByTaskId = query({
-  args: { taskId: v.id("tasks") },
+  args: { taskId: v.id("tasks"), token: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    // First verify the task belongs to the user
+    const task = await ctx.db.get(args.taskId);
+    if (!task || !userIdMatches(task.userId, userId)) {
+      throw new Error("Task not found or unauthorized");
+    }
+    
     const routine = await ctx.db
       .query("routines")
       .withIndex("by_taskId", (q) => q.eq("taskId", args.taskId))
@@ -79,11 +87,20 @@ export const getByTaskId = query({
 
 // Query: Get all routines with their tasks
 export const list = query({
-  handler: async (ctx) => {
-    const routines = await ctx.db
+  args: { token: v.optional(v.string()) },
+  handler: async (ctx, args) => {
+    const userId = await getCurrentUserIdOrNull(ctx, args.token ?? null);
+    if (!userId) {
+      return [];
+    }
+    // Get all routines and filter by userId (handles both string and ID types)
+    const allRoutines = await ctx.db
       .query("routines")
       .order("desc")
       .collect();
+    
+    // Filter routines that belong to this user
+    const routines = allRoutines.filter(routine => userIdMatches(routine.userId, userId));
     
     // Fetch associated tasks
     const routinesWithTasks = await Promise.all(
@@ -112,8 +129,16 @@ export const create = mutation({
     timeEstimate: v.optional(v.string()),
     goal: v.optional(v.string()),
     trackStreaks: v.boolean(),
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    // Verify the task belongs to the user
+    const task = await ctx.db.get(args.taskId);
+    if (!task || !userIdMatches(task.userId, userId)) {
+      throw new Error("Task not found or unauthorized");
+    }
+    
     // Check if routine already exists for this task
     const existing = await ctx.db
       .query("routines")
@@ -134,7 +159,9 @@ export const create = mutation({
       throw new Error("Weekly frequency requires at least one day of week");
     }
     
+    // userId is already a string from getCurrentUserId
     const routineId = await ctx.db.insert("routines", {
+      userId: userId as any,
       taskId: args.taskId,
       frequency: args.frequency,
       daysOfWeek: args.daysOfWeek,
@@ -166,12 +193,19 @@ export const update = mutation({
     timeEstimate: v.optional(v.string()),
     goal: v.optional(v.string()),
     trackStreaks: v.optional(v.boolean()),
+    token: v.optional(v.string()),
   },
   handler: async (ctx, args) => {
-    const { id, ...updates } = args;
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    const { id, token, ...updates } = args;
     const existing = await ctx.db.get(id);
     if (!existing) {
       throw new Error("Routine not found");
+    }
+    
+    // Ensure user owns this routine
+    if (!userIdMatches(existing.userId, userId)) {
+      throw new Error("Unauthorized");
     }
     
     // Validate custom interval
@@ -198,8 +232,19 @@ export const update = mutation({
 
 // Mutation: Delete routine config
 export const deleteRoutine = mutation({
-  args: { id: v.id("routines") },
+  args: { id: v.id("routines"), token: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    const routine = await ctx.db.get(args.id);
+    if (!routine) {
+      throw new Error("Routine not found");
+    }
+    
+    // Ensure user owns this routine
+    if (!userIdMatches(routine.userId, userId)) {
+      throw new Error("Unauthorized");
+    }
+    
     await ctx.db.delete(args.id);
     return args.id;
   },
@@ -207,8 +252,15 @@ export const deleteRoutine = mutation({
 
 // Mutation: Delete routine by task ID
 export const deleteByTaskId = mutation({
-  args: { taskId: v.id("tasks") },
+  args: { taskId: v.id("tasks"), token: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
+    // Verify the task belongs to the user
+    const task = await ctx.db.get(args.taskId);
+    if (!task || !userIdMatches(task.userId, userId)) {
+      throw new Error("Task not found or unauthorized");
+    }
+    
     const routine = await ctx.db
       .query("routines")
       .withIndex("by_taskId", (q) => q.eq("taskId", args.taskId))
@@ -224,11 +276,17 @@ export const deleteByTaskId = mutation({
 
 // Mutation: Mark routine as completed for today (updates streak)
 export const complete = mutation({
-  args: { routineId: v.id("routines") },
+  args: { routineId: v.id("routines"), token: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
     const routine = await ctx.db.get(args.routineId);
     if (!routine) {
       throw new Error("Routine not found");
+    }
+    
+    // Ensure user owns this routine
+    if (!userIdMatches(routine.userId, userId)) {
+      throw new Error("Unauthorized");
     }
     
     const today = getTodayISO();
@@ -268,11 +326,17 @@ export const complete = mutation({
 
 // Mutation: Remove today's completion
 export const uncomplete = mutation({
-  args: { routineId: v.id("routines") },
+  args: { routineId: v.id("routines"), token: v.optional(v.string()) },
   handler: async (ctx, args) => {
+    const userId = await getCurrentUserId(ctx, args.token ?? null);
     const routine = await ctx.db.get(args.routineId);
     if (!routine) {
       throw new Error("Routine not found");
+    }
+    
+    // Ensure user owns this routine
+    if (!userIdMatches(routine.userId, userId)) {
+      throw new Error("Unauthorized");
     }
     
     const today = getTodayISO();

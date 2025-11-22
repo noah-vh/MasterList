@@ -2,7 +2,22 @@ import { defineSchema, defineTable } from "convex/server";
 import { v } from "convex/values";
 
 export default defineSchema({
+  users: defineTable({
+    email: v.string(),
+    passwordHash: v.optional(v.string()), // Made optional to handle migration from old auth
+    createdAt: v.optional(v.number()), // Made optional to handle migration from old auth
+  })
+    .index("by_email", ["email"]),
+  sessions: defineTable({
+    userId: v.id("users"),
+    token: v.string(),
+    expiresAt: v.number(),
+    createdAt: v.number(),
+  })
+    .index("by_token", ["token"])
+    .index("by_userId", ["userId"]),
   tasks: defineTable({
+    userId: v.optional(v.union(v.id("users"), v.string())), // Temporarily allow strings during development
     title: v.string(),
     isCompleted: v.boolean(),
     status: v.union(
@@ -44,8 +59,10 @@ export default defineSchema({
     .index("by_actionDate", ["actionDate"])
     .index("by_createdAt", ["createdAt"])
     .index("by_parentTaskId", ["parentTaskId"])
-    .index("by_isRoutine", ["isRoutine"]),
+    .index("by_isRoutine", ["isRoutine"])
+    .index("by_userId", ["userId"]),
   routines: defineTable({
+    userId: v.optional(v.union(v.id("users"), v.string())), // Temporarily allow strings during development
     taskId: v.id("tasks"),
     frequency: v.union(
       v.literal("Daily"),
@@ -63,14 +80,18 @@ export default defineSchema({
     longestStreak: v.optional(v.number()),
     completionHistory: v.optional(v.array(v.string())),
   })
-    .index("by_taskId", ["taskId"]),
+    .index("by_taskId", ["taskId"])
+    .index("by_userId", ["userId"]),
   timeBlockTemplates: defineTable({
+    userId: v.optional(v.union(v.id("users"), v.string())), // Temporarily allow strings during development
     name: v.string(),
     createdAt: v.number(),
     isDefault: v.boolean(),
   })
-    .index("by_createdAt", ["createdAt"]),
+    .index("by_createdAt", ["createdAt"])
+    .index("by_userId", ["userId"]),
   timeBlocks: defineTable({
+    userId: v.optional(v.union(v.id("users"), v.string())), // Temporarily allow strings during development
     templateId: v.id("timeBlockTemplates"),
     startTime: v.number(),
     endTime: v.number(),
@@ -79,8 +100,10 @@ export default defineSchema({
     createdAt: v.number(),
   })
     .index("by_templateId", ["templateId"])
-    .index("by_templateId_startTime", ["templateId", "startTime"]),
+    .index("by_templateId_startTime", ["templateId", "startTime"])
+    .index("by_userId", ["userId"]),
   entries: defineTable({
+    userId: v.optional(v.union(v.id("users"), v.string())), // Temporarily allow strings during development
     content: v.string(),
     createdAt: v.number(),
     updatedAt: v.number(),
@@ -130,9 +153,10 @@ export default defineSchema({
     })),
   })
     .index("by_createdAt", ["createdAt"])
-    .index("by_contentType", ["contentType"]),
+    .index("by_contentType", ["contentType"])
+    .index("by_userId", ["userId"]),
   userSettings: defineTable({
-    userId: v.string(),
+    userId: v.optional(v.union(v.id("users"), v.string())), // Temporarily allow strings during development
     openRouterApiKey: v.optional(v.string()),
     modelTaskClassification: v.optional(v.string()),
     modelChat: v.optional(v.string()),

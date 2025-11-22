@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Test Convex Auth</title>
+    <style>
+        body {
+            font-family: system-ui, -apple-system, sans-serif;
+            max-width: 800px;
+            margin: 50px auto;
+            padding: 20px;
+        }
+        .section {
+            margin: 20px 0;
+            padding: 20px;
+            border: 1px solid #ddd;
+            border-radius: 8px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 4px;
+            background: #4CAF50;
+            color: white;
+            cursor: pointer;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button.danger {
+            background: #f44336;
+        }
+        button.danger:hover {
+            background: #da190b;
+        }
+        input {
+            padding: 8px;
+            margin: 5px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            width: 200px;
+        }
+        .error {
+            color: red;
+            margin: 10px 0;
+        }
+        .success {
+            color: green;
+            margin: 10px 0;
+        }
+        pre {
+            background: #f4f4f4;
+            padding: 10px;
+            border-radius: 4px;
+            overflow-x: auto;
+            font-size: 12px;
+        }
+        .info {
+            color: blue;
+            margin: 10px 0;
+        }
+    </style>
+</head>
+<body>
+    <h1>Convex Auth Test</h1>
+    
+    <div class="section">
+        <h2>Debug Tools</h2>
+        <button onclick="listUsers()">List All Users</button>
+        <button onclick="deleteUser()">Delete User by Email</button>
+        <button class="danger" onclick="deleteAllData()">Delete All Auth Data</button>
+        <input type="email" id="deleteEmail" placeholder="Email to delete" value="test@example.com">
+        <div id="debugResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>Sign Up</h2>
+        <input type="email" id="signupEmail" placeholder="Email" value="test@example.com">
+        <input type="password" id="signupPassword" placeholder="Password" value="password123">
+        <button onclick="testSignUp()">Sign Up</button>
+        <div id="signupResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>Sign In</h2>
+        <input type="email" id="signinEmail" placeholder="Email" value="test@example.com">
+        <input type="password" id="signinPassword" placeholder="Password" value="password123">
+        <button onclick="testSignIn()">Sign In</button>
+        <div id="signinResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>Current Session</h2>
+        <button onclick="checkSession()">Check Current User</button>
+        <button onclick="signOut()">Sign Out</button>
+        <div id="sessionResult"></div>
+    </div>
+
+    <div class="section">
+        <h2>Stored Token</h2>
+        <pre id="tokenDisplay">No token stored</pre>
+    </div>
+
+    <script>
+        // Your Convex URL
+        const CONVEX_URL = 'https://modest-wombat-281.convex.cloud';
+        
+        let currentToken = localStorage.getItem('auth_token');
+        updateTokenDisplay();
+
+        function updateTokenDisplay() {
+            currentToken = localStorage.getItem('auth_token');
+            document.getElementById('tokenDisplay').textContent = currentToken || 'No token stored';
+        }
+
+        async function callConvexFunction(functionName, args = {}) {
+            console.log(`Calling query: ${functionName}`, args);
+            const response = await fetch(`${CONVEX_URL}/api/query`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    path: functionName,
+                    args: args
+                })
+            });
+            
+            const text = await response.text();
+            console.log(`Response from ${functionName}:`, text);
+            
+            if (!response.ok) {
+                throw new Error(text);
+            }
+            
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                console.error('Failed to parse response:', text);
+                throw new Error('Invalid response from server');
+            }
+        }
+
+        async function callConvexMutation(functionName, args = {}) {
+            console.log(`Calling mutation: ${functionName}`, args);
+            const response = await fetch(`${CONVEX_URL}/api/mutation`, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                },
+                body: JSON.stringify({
+                    path: functionName,
+                    args: args
+                })
+            });
+            
+            const text = await response.text();
+            console.log(`Response from ${functionName}:`, text);
+            
+            if (!response.ok) {
+                throw new Error(text);
+            }
+            
+            try {
+                return JSON.parse(text);
+            } catch (e) {
+                console.error('Failed to parse response:', text);
+                throw new Error('Invalid response from server');
+            }
+        }
+
+        async function listUsers() {
+            const resultDiv = document.getElementById('debugResult');
+            try {
+                const result = await callConvexFunction('cleanupAuth:listUsers', {});
+                resultDiv.innerHTML = `<div class="info">Users in database:</div><pre>${JSON.stringify(result, null, 2)}</pre>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function deleteUser() {
+            const email = document.getElementById('deleteEmail').value;
+            const resultDiv = document.getElementById('debugResult');
+            try {
+                const result = await callConvexMutation('cleanupAuth:deleteUserByEmail', { email });
+                resultDiv.innerHTML = `<div class="success">Deleted user: ${JSON.stringify(result)}</div>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function deleteAllData() {
+            const resultDiv = document.getElementById('debugResult');
+            if (!confirm('Are you sure you want to delete ALL auth data?')) return;
+            
+            try {
+                const result = await callConvexMutation('cleanupAuth:deleteAllAuthData', {});
+                localStorage.removeItem('auth_token');
+                currentToken = null;
+                updateTokenDisplay();
+                resultDiv.innerHTML = `<div class="success">Deleted all data: ${JSON.stringify(result)}</div>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testSignUp() {
+            const email = document.getElementById('signupEmail').value;
+            const password = document.getElementById('signupPassword').value;
+            const resultDiv = document.getElementById('signupResult');
+            
+            try {
+                console.log('Signing up with:', { email, password });
+                const response = await callConvexMutation('auth:signUp', { email, password });
+                console.log('Sign up result:', response);
+                
+                // Extract the actual result from the Convex response wrapper
+                const result = response.value || response;
+                
+                if (result.token) {
+                    localStorage.setItem('auth_token', result.token);
+                    currentToken = result.token;
+                    updateTokenDisplay();
+                    resultDiv.innerHTML = `<div class="success">Success! User ID: ${result.userId}<br>Token: ${result.token.substring(0, 20)}...</div>`;
+                } else {
+                    resultDiv.innerHTML = `<div class="error">Sign up failed: No token returned</div>`;
+                }
+            } catch (error) {
+                console.error('Sign up error:', error);
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function testSignIn() {
+            const email = document.getElementById('signinEmail').value;
+            const password = document.getElementById('signinPassword').value;
+            const resultDiv = document.getElementById('signinResult');
+            
+            try {
+                console.log('Signing in with:', { email, password });
+                const response = await callConvexMutation('auth:signIn', { email, password });
+                console.log('Sign in result:', response);
+                
+                // Extract the actual result from the Convex response wrapper
+                const result = response.value || response;
+                
+                if (result.token) {
+                    localStorage.setItem('auth_token', result.token);
+                    currentToken = result.token;
+                    updateTokenDisplay();
+                    resultDiv.innerHTML = `<div class="success">Success! User ID: ${result.userId}<br>Token: ${result.token.substring(0, 20)}...</div>`;
+                } else {
+                    resultDiv.innerHTML = `<div class="error">Sign in failed: No token returned</div>`;
+                }
+            } catch (error) {
+                console.error('Sign in error:', error);
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function checkSession() {
+            const resultDiv = document.getElementById('sessionResult');
+            
+            if (!currentToken) {
+                resultDiv.innerHTML = `<div class="error">No token stored</div>`;
+                return;
+            }
+            
+            try {
+                const response = await callConvexFunction('auth:getCurrentUser', { token: currentToken });
+                
+                // Extract the actual result from the Convex response wrapper
+                const result = response.value || response;
+                
+                if (result) {
+                    resultDiv.innerHTML = `<div class="success">Logged in as: ${result.email} (ID: ${result.userId})</div>`;
+                } else {
+                    resultDiv.innerHTML = `<div class="error">Session invalid or expired</div>`;
+                }
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+
+        async function signOut() {
+            const resultDiv = document.getElementById('sessionResult');
+            
+            if (!currentToken) {
+                resultDiv.innerHTML = `<div class="error">No token to sign out</div>`;
+                return;
+            }
+            
+            try {
+                await callConvexMutation('auth:signOut', { token: currentToken });
+                localStorage.removeItem('auth_token');
+                currentToken = null;
+                updateTokenDisplay();
+                resultDiv.innerHTML = `<div class="success">Signed out successfully</div>`;
+            } catch (error) {
+                resultDiv.innerHTML = `<div class="error">Error: ${error.message}</div>`;
+            }
+        }
+    </script>
+</body>
+</html>

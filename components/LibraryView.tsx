@@ -20,6 +20,7 @@ interface LibraryViewProps {
   onToggleTask?: (taskId: string) => void;
   visibleCategories?: string[]; // Categories to show (controlled by FilterBar toggles)
   searchQuery?: string;
+  token?: string | null;
 }
 
 interface SearchCard {
@@ -78,8 +79,9 @@ export const LibraryView: React.FC<LibraryViewProps> = ({
   onToggleTask,
   visibleCategories = [], // Default: show none
   searchQuery = '',
+  token,
 }) => {
-  const entries = useQuery(api.entries.list);
+  const entries = useQuery(api.entries.list, token ? { token } : "skip");
   
   // Convert Convex entries to frontend Entry type
   const frontendEntries = useMemo(() => {
